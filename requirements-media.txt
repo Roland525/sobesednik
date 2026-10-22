@@ -1,0 +1,4 @@
+# Optional promo rendering only; not needed to run the bot.
+Pillow==12.3.0
+numpy==2.4.4
+imageio-ffmpeg==0.6.0

@@ -1,0 +1,26 @@
+# Local state and credentials
+.venv/
+.venv-training/
+.deps/
+models/
+tools/ollama/
+tools/llama-cpp/
+tools/*.zip
+backups/
+logs/
+temp/
+responses/
+artifacts/
+data/
+config.json
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.serega.lock
+.serega.stop
+.learning-maintenance.lock
+.serega-supervisor.lock
+reports/*.wav
+reports/discord-probe*
