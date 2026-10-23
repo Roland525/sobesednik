@@ -1,11 +1,15 @@
 <div align="center">
 
-# Собеседник
+# Собеседник (Sobesednik)
 
-### Голосовой ИИ в вашем Discord. На вашем компьютере.
+### Локальный голосовой ИИ-бот для Discord на Windows
 
-Общайтесь голосом, настройте характер и решайте сами, что бот запомнит.
-Без подписки и платных API.
+**Собеседник** — бесплатный Discord-бот с искусственным интеллектом: общается на русском,
+отвечает голосом и запоминает участников. Настройте характер и решайте сами, что он запомнит.
+Модели работают на вашем компьютере, без подписки и платных API.
+
+*Sobesednik is an open-source local AI voice companion for Discord, with Russian speech,
+participant memory and a Windows installer.*
 
 **[⬇ СКАЧАТЬ ДЛЯ WINDOWS · EXE](https://github.com/Roland525/sobesednik/releases/download/v1.0.0/Sobesednik-Setup-1.0.0.exe)**
 
