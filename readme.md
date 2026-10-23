@@ -66,4 +66,4 @@
 
 ---
 
-Код открыт под [MIT](LICENSE). Основан на [discospeech](https://github.com/ajr-dev/discospeech). [Лицензии компонентов](NOTICES.md).
+Код открыт под [MIT](LICENSE). Основан на [discospeech](https://github.com/ajr-dev/discospeech). [Лицензии компонентов](app/NOTICES.md).

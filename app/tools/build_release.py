@@ -10,8 +10,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-ROOT_FILES = ['.gitignore', '.gitattributes', '.env.example', 'config.example.json', 'LICENSE', 'NOTICES.md',
-              'PERSONA.md', 'readme.md', 'requirements.txt', 'requirements-training.txt',
+ROOT_FILES = ['.env.example', 'config.example.json', 'LICENSE', 'NOTICES.md',
+              'PERSONA.md', 'requirements.txt', 'requirements-training.txt',
               'requirements-media.txt', 'main.py', 'setup.bat', 'setup_learning.bat', 'start.bat', 'stop.bat']
 ROOT_FILES += ['desktop_entry.py','requirements-desktop.txt']
 TOOLS = ['setup.ps1', 'setup_learning.ps1', 'configure_token.ps1', 'ensure_ollama.ps1',
@@ -29,7 +29,7 @@ def release_files():
     files += [p.relative_to(ROOT) for directory in ('bot', 'desktop', 'tests', 'tests_training','tests_desktop')
               for p in (ROOT / directory).rglob('*.py')]
     files += [Path('bot/vendor/README.md'), Path('bot/vendor/SUPERTONIC_LICENSE'),
-              Path('.github/workflows/tests.yml'),Path('.github/workflows/desktop.yml'),Path('packaging/installer.iss')]
+              Path('packaging/installer.iss')]
     files += [p.relative_to(ROOT) for p in (ROOT/'docs').rglob('*.md')]
     files += [p.relative_to(ROOT) for p in (ROOT/'packaging/licenses').glob('*.txt')]
     return sorted(set(files), key=str)
