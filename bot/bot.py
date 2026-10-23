@@ -43,6 +43,7 @@ class DiscordBot(commands.Bot):
         self.guild_locks = {}
         self.synced_guilds = set()
         self.monitor_task = None
+        self.desktop_task = None
         self.voice_transitions = set()
         self.voice_recovery_tasks = {}
         self.disconnected_since = {}
@@ -71,6 +72,8 @@ class DiscordBot(commands.Bot):
         await asyncio.to_thread(self.tts_service.load)
         await self.tree.sync()
         self.monitor_task = asyncio.create_task(self.monitor(), name='voice-monitor')
+        from .desktop_control import DesktopControl
+        self.desktop_task = asyncio.create_task(DesktopControl(self, ROOT).run(), name='desktop-control')
 
     async def on_ready(self):
         self.logger.info('Собеседник подключён к Discord; серверов: %d', len(self.guilds))
@@ -490,6 +493,9 @@ class DiscordBot(commands.Bot):
             await asyncio.sleep(5)
 
     async def close(self):
+        if self.desktop_task:
+            self.desktop_task.cancel()
+            await asyncio.gather(self.desktop_task, return_exceptions=True)
         self.shutting_down = True
         await self.voice_routes.close()
         for task in self.voice_recovery_tasks.values():

@@ -13,21 +13,25 @@ sys.path.insert(0, str(ROOT))
 ROOT_FILES = ['.gitignore', '.gitattributes', '.env.example', 'config.example.json', 'LICENSE', 'NOTICES.md',
               'PERSONA.md', 'readme.md', 'requirements.txt', 'requirements-training.txt',
               'requirements-media.txt', 'main.py', 'setup.bat', 'setup_learning.bat', 'start.bat', 'stop.bat']
+ROOT_FILES += ['desktop_entry.py','requirements-desktop.txt']
 TOOLS = ['setup.ps1', 'setup_learning.ps1', 'configure_token.ps1', 'ensure_ollama.ps1',
          'download_models.py', 'download_learning_base.py', 'download_llama_converter.py',
          'enable_learning.py', 'process_tree.py', 'export_learning.py', 'train_local_lora.py',
          'merge_lora_candidate.py', 'convert_candidate_gguf.py', 'run_learning_cycle.py',
          'evaluate_answers.py', 'evaluate_local_lora.py', 'check_training_preparation.py',
          'create_promo_audio.py', 'render_promo.py', 'build_release.py']
+TOOLS += ['build_desktop.py']
 
 
 def release_files():
     files = [Path(name) for name in ROOT_FILES]
     files += [Path('tools') / name for name in TOOLS]
-    files += [p.relative_to(ROOT) for directory in ('bot', 'tests', 'tests_training')
+    files += [p.relative_to(ROOT) for directory in ('bot', 'desktop', 'tests', 'tests_training','tests_desktop')
               for p in (ROOT / directory).rglob('*.py')]
     files += [Path('bot/vendor/README.md'), Path('bot/vendor/SUPERTONIC_LICENSE'),
-              Path('docs/LOCAL_LEARNING.md'), Path('.github/workflows/tests.yml')]
+              Path('.github/workflows/tests.yml'),Path('.github/workflows/desktop.yml'),Path('packaging/installer.iss')]
+    files += [p.relative_to(ROOT) for p in (ROOT/'docs').rglob('*.md')]
+    files += [p.relative_to(ROOT) for p in (ROOT/'packaging/licenses').glob('*.txt')]
     return sorted(set(files), key=str)
 
 

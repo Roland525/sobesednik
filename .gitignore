@@ -1,6 +1,11 @@
 # Local state and credentials
 .venv/
 .venv-training/
+.venv-desktop/
+.desktop-build/
+dist/
+build/
+.superpowers/
 .deps/
 models/
 tools/ollama/
