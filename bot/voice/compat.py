@@ -4,6 +4,7 @@ voice-recv decrypts the transport but omits DAVE before Opus decoding. Never
 pass failed E2EE decryptions to the decoder as if they were plaintext.
 """
 import importlib.metadata
+import json
 from collections import deque
 import logging
 import time
@@ -13,14 +14,33 @@ stats = {'dave_decrypted': 0, 'dave_dropped': 0, 'opus_bad': 0, 'non_audio_dropp
          'jitter_preserved': 0}
 
 
+def check_voice_versions():
+    if importlib.metadata.version('discord.py') != '2.7.1':
+        raise RuntimeError('Для DAVE-адаптера требуется discord.py==2.7.1. Запустите setup.bat.')
+    version = importlib.metadata.version('discord-ext-voice-recv')
+    if version == '0.5.3a180':
+        return
+    if version == '0.5.3a0':
+        # Archive builds have no Git commit count. Check their installed source
+        # instead of accepting any unrelated wheel with the same version.
+        try:
+            direct = json.loads(importlib.metadata.distribution(
+                'discord-ext-voice-recv').read_text('direct_url.json') or '{}')
+            if direct.get('url') == (
+                'https://github.com/imayhaveborkedit/discord-ext-voice-recv/archive/'
+                'ac04ea7b0941112e83767cf1c1469b408fa06748.zip'
+            ):
+                return
+        except (ValueError, TypeError, AttributeError):
+            pass
+    raise RuntimeError('Для DAVE-адаптера нужна закреплённая сборка voice-recv. Запустите setup.bat.')
+
+
 def install():
     global _installed
     if _installed:
         return
-    expected = {'discord.py': '2.7.1', 'discord-ext-voice-recv': '0.5.3a180'}
-    for name, version in expected.items():
-        if importlib.metadata.version(name) != version:
-            raise RuntimeError(f'Для DAVE-адаптера требуется {name}=={version}. Запустите setup.bat.')
+    check_voice_versions()
     import davey
     from discord.opus import Decoder, OpusError
     from discord.ext.voice_recv.router import PacketRouter
