@@ -143,10 +143,14 @@ class Runtime:
         (self.protocol.directory/'state.json').unlink(missing_ok=True)
         if self.log_handle: self.log_handle.close(); self.log_handle=None
 
-    def close(self):
-        self.stop()
+    def close_server(self):
+        """Release only the Ollama process tree owned by this application."""
         if self.server: self.server.close(); self.server=None
         if self.server_log: self.server_log.close(); self.server_log=None
+
+    def close(self):
+        self.stop()
+        self.close_server()
 
 
 def sample_resources():

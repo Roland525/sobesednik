@@ -62,6 +62,8 @@ class Installer:
         if self.runtime.running(): raise RuntimeError('Остановите бота перед установкой или обновлением')
         if shutil.disk_usage(self.root).free<20*1024**3:
             raise RuntimeError('Нужно минимум 20 ГБ свободного места для моделей и установки')
+        # A previous failed run may still own an Ollama bootstrap inside .venv.
+        self.runtime.close_server()
         (self.root/'.desktop-ready.json').unlink(missing_ok=True)
         self.progress(2,'Подготовка','Проверяем исходники и сохраняем существующие данные')
         install_payload(self.payload,self.root)
@@ -79,8 +81,14 @@ class Installer:
             self.progress(percent,title,'')
             run_step(args,self.root,python,lambda line:self.progress(percent,title,line),
                      self.cancel,timeout,env)
-        step(18,'Окружение',[python,'-m','venv',str(self.root/'.venv')],180)
         venv=self.runtime.python
+        if venv.is_file():
+            # A retry must not overwrite an existing Python launcher.
+            step(18,'Проверка окружения',[venv,'-c',
+                'import sys, pathlib, pip; assert pathlib.Path(sys.prefix).resolve() == pathlib.Path(sys.argv[1]).resolve()',
+                str(self.root/'.venv')],60)
+        else:
+            step(18,'Окружение',[python,'-m','venv',str(self.root/'.venv')],180)
         step(24,'Зависимости',[venv,'-m','pip','install','-r','requirements.txt'])
         Profile(self.root).save_settings({'whisper_model':'models/faster-whisper-'+stt_model})
         step(42,'Голосовые модели',[venv,'tools/download_models.py','--ollama','--tts-engine','supertonic',

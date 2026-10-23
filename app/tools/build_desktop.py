@@ -64,7 +64,7 @@ def prepare(build):
 
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--iscc',type=Path)
-    parser.add_argument('--prepare-only',action='store_true'); parser.add_argument('--version',default='1.0.0')
+    parser.add_argument('--prepare-only',action='store_true'); parser.add_argument('--version',default='1.0.1')
     args=parser.parse_args(); build=ROOT/'.desktop-build'
     prepare(build)
     if args.prepare_only: return

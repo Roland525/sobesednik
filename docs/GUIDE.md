@@ -6,7 +6,7 @@
 
 ## Установка одним EXE
 
-**[Скачать Собеседник для Windows](https://github.com/Roland525/sobesednik/releases/download/v1.0.0/Sobesednik-Setup-1.0.0.exe)** · [Все выпуски и SHA-256](https://github.com/Roland525/sobesednik/releases)
+**[Скачать Собеседник для Windows](https://github.com/Roland525/sobesednik/releases/download/v1.0.1/Sobesednik-Setup-1.0.1.exe)** · [Все выпуски и SHA-256](https://github.com/Roland525/sobesednik/releases)
 
 1. Скачайте EXE и установите приложение. Права администратора и заранее установленный Python не нужны.
 2. Откройте ярлык **«Собеседник»**. На вкладке **«Обзор»** нажмите **«Установить компоненты»**.

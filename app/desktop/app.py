@@ -82,7 +82,7 @@ class MainWindow(QMainWindow,Views):
         self.navigation.addItems(['Обзор','Discord','Голос и ответы','Персона','Память','Журнал'])
         side.addWidget(self.navigation,1)
         side.addWidget(label('Локальные модели\nВаш компьютер. Ваши данные.','subtitle'))
-        side.addWidget(label('Windows · версия 1.0','eyebrow')); outer.addWidget(sidebar)
+        side.addWidget(label('Windows · версия 1.0.1','eyebrow')); outer.addWidget(sidebar)
         content=QWidget(); content_layout=QVBoxLayout(content); content_layout.setContentsMargins(30,22,26,20); content_layout.setSpacing(17)
         self.guild_box=QComboBox(); self.guild_box.setMinimumWidth(230); self.guild_box.addItem('Сервер появится после запуска','')
         self.status_label=label('Остановлен','status',False)
@@ -119,6 +119,7 @@ class MainWindow(QMainWindow,Views):
         task.progress.connect(self.install_update)
         def failed(message):
             self.notice(message)
+            self.install_update(self.install_progress.value(),'Ошибка',message)
             if self.close_requested:
                 self.close_requested=False; self.refresh_timer.start(750); self.resource_timer.start(3500)
         task.error.connect(failed)
@@ -202,7 +203,7 @@ class MainWindow(QMainWindow,Views):
             self.install_button.setText('Проверить / доустановить')
             if not self.busy: self.install_stage.setText('Основные компоненты установлены')
             self.hero_title.setText('Собеседник на связи' if self.state else 'Можно запускать')
-            self.hero_detail.setText('Выберите канал в разделе Discord. Обращайтесь по имени — или продолжайте уже начатую тему.' if self.state else 'Модели готовы. Укажите токен в разделе Discord и запустите бота.')
+            self.hero_detail.setText('Выберите канал в разделе Discord. Обращайтесь по имени — или продолжайте уже начатую тему.' if self.state else ('Модели и токен готовы. Нажмите «Запустить бота».' if self.token else 'Модели готовы. Укажите токен в разделе Discord и запустите бота.'))
         metrics=self.state.get('sessions',{}).get(str(self.guild_id()),{}).get('metrics',{})
         latency=metrics.get('first_playback_ms')
         if isinstance(latency,(int,float)): self.latency_card.update_value(f'{latency/1000:.1f} с','Последний ответ · не среднее')
@@ -231,7 +232,14 @@ class MainWindow(QMainWindow,Views):
 
     def install_update(self,percent,title,line):
         self.install_progress.setValue(percent); self.install_stage.setText(title)
-        if line: self.install_log.appendPlainText(redact(line,self.token))
+        if line:
+            clean=redact(line,self.token)
+            self.install_log.appendPlainText(clean)
+            try:
+                folder=self.profile.root/'logs'; folder.mkdir(exist_ok=True)
+                with (folder/'desktop-install.log').open('a',encoding='utf-8') as log:
+                    log.write(f'[{percent}% {title}] {clean}\n')
+            except OSError: pass
 
     def install_components(self):
         if not self.payload.exists(): self.notice('Архив компонентов не найден. Используйте установочный EXE из GitHub Releases.'); return
@@ -266,7 +274,9 @@ class MainWindow(QMainWindow,Views):
         def done(account):
             self.account=account; self.token=token; self.token_input.clear()
             self.token_status.setText('Токен сохранён · бот '+account.get('username',''))
-            self.notice('Токен проверен. Пригласите бота на сервер; если бот уже запущен, перезапустите его.')
+            self.notice('Токен проверен. Перезапустите бота для применения.' if self.runtime.running()
+                else ('Токен проверен. Пригласите бота на сервер и нажмите «Запустить бота» в Обзоре.'
+                      if self.runtime.installed() else 'Токен сохранён. Завершите установку компонентов в Обзоре — после этого появится кнопка запуска.'))
         self.run_job(check,done)
 
     def invite_bot(self):
@@ -276,7 +286,7 @@ class MainWindow(QMainWindow,Views):
         else: self.run_job(lambda _:bot_account(self.token),done)
 
     def open_portal(self): QDesktopServices.openUrl(QUrl(PORTAL))
-    def open_instructions(self): QDesktopServices.openUrl(QUrl(REPOSITORY+'#как-получить-токен-бота'))
+    def open_instructions(self): QDesktopServices.openUrl(QUrl(REPOSITORY+'/blob/main/docs/GUIDE.md#как-получить-токен-бота'))
     def open_learning_docs(self): QDesktopServices.openUrl(QUrl(REPOSITORY+'/blob/main/docs/LOCAL_LEARNING.md'))
     def open_folder(self): QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.profile.root)))
     def open_logs(self):
