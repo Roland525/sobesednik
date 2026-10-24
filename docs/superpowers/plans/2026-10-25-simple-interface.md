@@ -6,11 +6,11 @@ Design: one visible name field on Home saves bot_name and wake_word together, th
 
 Simplify Home to launch controls, name and channel selection, shortcuts. Put installation and file paths in an expandable maintenance block. Split bot settings into Voice, Model and Conversation tabs; keep Save fixed. Fold advanced comparison/training/context details without removing functions.
 
-- [ ] RED: name/wake saved together, persona unchanged, current identity in prompt, custom wake gate fallback, channel retained on restart.
-- [ ] Implement identity validation, runtime prompt/wake support, visible Home form and explicit save.
-- [ ] RED: Home contains channel/name controls, installed maintenance collapsed, settings tabs and Save visible.
-- [ ] Implement progressive disclosure, move channel choice to Home, simplify labels and settings grouping.
-- [ ] Run backend/Qt regressions, render control frames, fresh critical review.
-- [ ] Build and publish next patch, install, verify private data preservation and real native UI.
+- [x] RED: name/wake saved together, persona unchanged, current identity in prompt, custom wake gate fallback, channel retained on restart.
+- [x] Implement identity validation, runtime prompt/wake support, visible Home form and explicit save.
+- [x] RED: Home contains channel/name controls, installed maintenance collapsed, settings tabs and Save visible.
+- [x] Implement progressive disclosure, move channel choice to Home, simplify labels and settings grouping.
+- [x] Run backend/Qt regressions, render control frames, fresh critical review.
+- [x] Build and publish next patch, install, verify private data preservation and real native UI.
 
 Constraints: preserve stored models/memories/persona/token and chosen bot name; no automatic renaming to a test value. No color theme feature requested. No per-server profiles. Reuse existing checkout/release workflow already authorized.
