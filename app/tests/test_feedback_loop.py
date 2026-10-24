@@ -83,7 +83,7 @@ class LoopAsyncTests(unittest.IsolatedAsyncioTestCase):
             last_ms = {}
             text = 'Серёга, привет!'
             async def transcribe(self, *args, **kwargs): return self.text
-        state = GuildSession(1, Config(conversation_mode='strict'), STT(), None, None,
+        state = GuildSession(1, Config(conversation_mode='strict',followup_enabled=False), STT(), None, None,
                              logging.getLogger(), logging.getLogger())
         captured = []
         state.enqueue = captured.append
@@ -133,7 +133,7 @@ class LoopAsyncTests(unittest.IsolatedAsyncioTestCase):
             # the bot's own question must still continue the conversation.
             await feed('Серёга, привет!', uid=2)
             state.conversation.history.append({'role': 'assistant', 'content': 'Ты играл в Ведьмака?'})
-            await feed('Да.')
+            await feed('Да.',uid=2)
             self.assertEqual(len(captured), 5)
         finally:
             worker.cancel()
