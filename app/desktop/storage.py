@@ -17,6 +17,7 @@ EDITABLE = {'wake_word', 'bot_name', 'tts_speed', 'tts_volume', 'tts_supertonic_
             'auto_join_channel_id', 'dota_patch_source_enabled', 'whisper_model', 'ollama_num_gpu',
             'ollama_model', 'response_profile','resource_level','ollama_num_thread','tts_cpu_threads',
             'memory_auto_enabled','listen_conversation'}
+EDITABLE.update({'followup_enabled','interrupt_enabled'})
 
 
 def read_shared(path, encoding='utf-8'):

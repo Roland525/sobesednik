@@ -37,6 +37,10 @@ class MemoryPCM(discord.AudioSource):
         self.pcm = b''
 
 
+class SpeechDeferred(Exception):
+    """The human is still speaking; cancel producers without an error reply."""
+
+
 @dataclass
 class Question:
     user_id: int
@@ -88,6 +92,8 @@ class GuildSession:
         self.ambient_context = deque(maxlen=4)
         self.last_unsolicited_at = 0.0
         self.current_kind = None
+        self.current_question=None
+        self.deferred_question=None
         self.dialogue_owner = None
         self.awaiting_question = None
         self.ambient_pending = False
@@ -263,7 +269,24 @@ class GuildSession:
                     try: notice=self.learning.heard(self.guild_id,uid,memory_text)
                     except Exception as error:
                         self.logger.warning('Не удалось сохранить учебный пример: %s',type(error).__name__)
-                if self.require_wake_each_turn and not hit and not self.rare_mode:
+                members = getattr(getattr(self.voice_client, 'channel', None), 'members', ())
+                names = [name for member in members if not member.bot and member.id != uid
+                         for name in (getattr(member, 'display_name', ''), getattr(member, 'name', ''))]
+                base=self.current_question or self.deferred_question
+                if not base:
+                    base=next((item[2] for item in self.questions._queue if item[2].user_id==uid and item[2].kind=='voice'),None)
+                fragment=(not hit and not self.muted and base and base.kind=='voice' and base.user_id==uid
+                    and 'first_playback_ms' not in base.timings and 0<=utterance.started-base.ended<=1.2
+                    and len(memory_text.split())>=2 and len(base.text)+len(memory_text)<2000
+                    and not addresses_someone_else(text,names,self.config.wake_word))
+                if fragment:
+                    self.deferred_question=None
+                    await self.submit_direct(Question(uid,utterance.member.display_name,base.text+' '+memory_text,
+                        utterance.ended,dict(self.stt.last_ms),turn_id=turn_id,route_reason='continuation'))
+                    continue
+                eligible_followup=(self.config.followup_enabled and self.conversation.follows_up(uid)
+                                   and self.dialogue_owner in (None,uid))
+                if self.require_wake_each_turn and not hit and not eligible_followup:
                     continue
                 if self.muted:
                     if not hit:
@@ -295,8 +318,7 @@ class GuildSession:
                         memory_answer = memory_answer or self.memory.can_resolve_pending(self.guild_id, uid, text)
                     except Exception as error:
                         self.logger.warning('Не удалось проверить уточнение памяти: %s', type(error).__name__)
-                followup = (not self.require_wake_each_turn and self.conversation.follows_up(uid)
-                            and (self.participant_mode and not self.rare_mode or self.dialogue_owner in (None, uid))
+                followup = (eligible_followup
                             and (memory_answer or not addresses_someone_else(text, names, self.config.wake_word)))
                 if followup and not hit and (self.rare_mode or not self.participant_mode):
                     greeting = re.fullmatch(r'(?:привет|здравствуй|здравствуйте)[.! ]*', text.lower())
@@ -469,6 +491,8 @@ class GuildSession:
         # Only explicit commands preempt; ordinary followups keep normal turn-taking.
         command = (memory_request(question.text) is not None
                    or bool(self.voice_routes and self.voice_routes.is_command(question.text)))
+        command=command or question.route_reason=='continuation' or (self.config.interrupt_enabled
+            and question.route_reason in ('named','followup') and question.kind=='voice')
         if command and self.responding and self.current_kind not in ('say', 'safe_say') and self.response_task:
             self.response_task.cancel()
             await asyncio.gather(self.response_task, return_exceptions=True)
@@ -541,6 +565,18 @@ class GuildSession:
             self.playing_since = 0
             source.cleanup()
 
+    async def wait_for_speaker(self,question):
+        if question.kind!='voice' or not self.sink:return True
+        deadline=time.monotonic()+1.2
+        while time.monotonic()<deadline:
+            speaker=self.sink.speakers.get(question.user_id)
+            if not speaker or not speaker.frames or time.monotonic()-speaker.last_voice>.25:return True
+            await asyncio.sleep(.04)
+        self.deferred_question=question
+        question.timings['speech_deferred']=1
+        self.journal.update(question.turn_id,status='waiting_for_speaker')
+        return False
+
     async def speak_stream(self, question, messages):
         audio = asyncio.Queue(maxsize=2)
         spoken = []
@@ -575,6 +611,7 @@ class GuildSession:
                 if item is None:
                     break
                 pcm, sentence = item
+                if not spoken and not await self.wait_for_speaker(question):raise SpeechDeferred()
                 if self.rare_mode and question.kind == 'ambient_say':
                     last_voice = max((s.last_voice for s in self.sink.speakers.values()), default=0) if self.sink else 0
                     if (self.quiet_mode or self.muted or self.last_human_at > question.enqueued_at
@@ -587,6 +624,8 @@ class GuildSession:
             async with asyncio.TaskGroup() as group:
                 group.create_task(producer())
                 group.create_task(player())
+        except* SpeechDeferred:
+            pass
         finally:
             # Keep only speech that was actually played if the stream failed.
             if spoken and question.kind != 'say':
@@ -598,6 +637,7 @@ class GuildSession:
             _, _, question = await self.questions.get()
             pending_kind = question.kind
             self.current_kind = pending_kind
+            self.current_question=question
             self.responding = True
             try:
                 self.journal.update(question.turn_id,status='working')
@@ -700,6 +740,7 @@ class GuildSession:
                 else:
                     response = await self.speak_stream(question, messages)
                 if not response:
+                    if question.timings.get('speech_deferred'):continue
                     if pending_kind in ('ambient', 'initiative'):
                         continue
                     raise RuntimeError('Пустой ответ модели')
@@ -749,6 +790,7 @@ class GuildSession:
                     self.last_initiative_at = time.monotonic()
                 self.responding = False
                 self.current_kind = None
+                self.current_question=None
                 self.questions.task_done()
 
     def initiative_allowed(self, now, pending=False):
@@ -817,6 +859,8 @@ class GuildSession:
         self.recent_inputs.clear()
         self.ambient_context.clear()
         self.dialogue_owner = self.awaiting_question = None
+        self.deferred_question=None
+        self.current_question=None
         self.ambient_pending = False
         self.initiative_pending = False
         self.initiative_armed = False

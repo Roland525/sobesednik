@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QTableWidget,QTableWidgetItem,QPlainTextEdit,QAbst
 from .widgets import card,label,button,row
 
 REASONS={'named':'Обращение по имени','followup':'Продолжение темы тем же участником',
+         'continuation':'Участник договаривает ещё не озвученный вопрос',
          'clarification':'Уточнение команды или памяти','background':'Беседа канала — ответ не запрошен',
          'hush':'Команда остановить речь','echo':'Похоже на эхо бота','duplicate':'Повтор той же фразы',
          'muted':'Речь остановлена','ambient':'Кандидат на редкое дополнение',

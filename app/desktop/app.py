@@ -249,6 +249,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
             self.length.setValue(cfg['max_response_chars']); self.history.setValue(cfg['history_turns'])
             index=self.mode_choice.findData(cfg['conversation_mode']); self.mode_choice.setCurrentIndex(max(0,index))
             self.reasoning.setChecked(cfg['ollama_reasoning']); self.dota.setChecked(cfg['dota_patch_source_enabled'])
+            self.followup.setChecked(cfg['followup_enabled']);self.interrupt.setChecked(cfg['interrupt_enabled'])
             self.remember_channel.blockSignals(True)
             self.remember_channel.setChecked(bool(cfg['auto_join_channel_id']))
             self.remember_channel.blockSignals(False)
@@ -388,7 +389,8 @@ class MainWindow(QMainWindow,Views,QualityControls):
                 'tts_supertonic_voice':self.voice_choice.currentText(),'tts_speed':self.speed.value(),
                 'tts_volume':self.volume.value(),'conversation_mode':self.mode_choice.currentData(),
                 'max_response_chars':self.length.value(),'history_turns':self.history.value(),
-                'ollama_reasoning':self.reasoning.isChecked(),'dota_patch_source_enabled':self.dota.isChecked()})
+                'ollama_reasoning':self.reasoning.isChecked(),'dota_patch_source_enabled':self.dota.isChecked(),
+                'followup_enabled':self.followup.isChecked(),'interrupt_enabled':self.interrupt.isChecked()})
             self.notice('Настройки сохранены. Для применения перезапустите бота.')
             if restart and self.runtime.running(): self.restart_bot()
         except Exception as error: self.notice(str(error))

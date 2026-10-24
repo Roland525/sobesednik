@@ -60,6 +60,8 @@ class Config:
     wake_word: str = 'собеседник'
     wake_timeout: float = 20.0
     followup_timeout: float = 35.0
+    followup_enabled: bool = True
+    interrupt_enabled: bool = True
     wake_model: str = 'models/vosk-model-small-ru-0.22'
     whisper_model: str = 'models/faster-whisper-large-v3-turbo'
     whisper_device: str = 'auto'
@@ -158,7 +160,7 @@ class Config:
             raise ValueError('tts_supertonic_voice: M1..M5')
         if not self.ollama_model or self.ollama_model.endswith('-cloud') or ':cloud' in self.ollama_model:
             raise ValueError('Разрешены только локально установленные модели Ollama')
-        for name in ('listen_only_joiner', 'sync_guild_commands', 'enable_prefix_commands', 'initiative_enabled', 'ollama_reasoning', 'dota_patch_source_enabled', 'memory_enabled', 'memory_auto_enabled','listen_conversation','learning_capture_enabled', 'learning_auto_enabled'):
+        for name in ('followup_enabled','interrupt_enabled','listen_only_joiner', 'sync_guild_commands', 'enable_prefix_commands', 'initiative_enabled', 'ollama_reasoning', 'dota_patch_source_enabled', 'memory_enabled', 'memory_auto_enabled','listen_conversation','learning_capture_enabled', 'learning_auto_enabled'):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f'{name} должен быть true или false')
         if self.conversation_mode not in ('participant', 'summon', 'strict', 'rare'):
