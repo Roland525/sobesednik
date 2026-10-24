@@ -40,12 +40,12 @@ def read_shared(path, encoding='utf-8'):
 
 def replace_file(source, target):
     # Windows readers briefly hold a handle without FILE_SHARE_DELETE.
-    for attempt in range(8):
+    for attempt in range(20):
         try:
             source.replace(target)
             return
         except PermissionError:
-            if attempt == 7: raise
+            if attempt == 19: raise
             time.sleep(.01 * (attempt + 1))
 
 

@@ -68,3 +68,13 @@ class PanelReliability(unittest.TestCase):
    finally:done.set();thread.join()
    self.assertEqual(errors,[])
    self.assertEqual(json.loads(read_shared(p))['n'],149)
+ def test_longer_windows_scanner_lock_is_retried_without_partial_write(self):
+  with tempfile.TemporaryDirectory() as folder:
+   p=Path(folder)/'state.json';real=Path.replace;calls=[]
+   def replace(src,dest):
+    calls.append(1)
+    if len(calls)<=12:raise PermissionError('temporary scanner handle')
+    return real(src,dest)
+   with patch.object(Path,'replace',replace),patch('desktop.storage.time.sleep'):
+    atomic_json(p,{'complete':True})
+   self.assertEqual(json.loads(p.read_text()),{'complete':True})

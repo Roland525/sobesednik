@@ -124,7 +124,10 @@ $report = Join-Path $cfg.root 'reports\app-update-result.json'
 try {
     Wait-Process -Id $cfg.parent_pid -Timeout 60 -ErrorAction SilentlyContinue
     if (Get-Process -Id $cfg.parent_pid -ErrorAction SilentlyContinue) { throw 'Previous application did not exit.' }
-    $hash = (Get-FileHash -LiteralPath $cfg.installer -Algorithm SHA256).Hash
+    $stream = [System.IO.File]::OpenRead($cfg.installer)
+    $digest = [System.Security.Cryptography.SHA256]::Create()
+    try { $hash = [System.BitConverter]::ToString($digest.ComputeHash($stream)).Replace('-','') }
+    finally { $stream.Dispose(); $digest.Dispose() }
     if ($hash.ToLowerInvariant() -ne $cfg.sha256) { throw 'Installer checksum mismatch.' }
     $setupArgs = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',
                    ('/DIR="' + $cfg.install_dir + '"'),('/LOG="' + $cfg.log + '"'))
@@ -133,10 +136,12 @@ try {
     @{ok=$true;version=$cfg.version} | ConvertTo-Json | Set-Content -LiteralPath $report -Encoding UTF8
     $appArgs = @('--data-dir',('"' + $cfg.root + '"'))
     if ($cfg.resume_channel -ge 0) { $appArgs += @('--resume-after-update',[string]$cfg.resume_channel) }
+    $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
     Start-Process -FilePath $cfg.app -ArgumentList $appArgs -WindowStyle Normal
 } catch {
     @{ok=$false;version=$cfg.version;error=$_.Exception.Message} | ConvertTo-Json | Set-Content -LiteralPath $report -Encoding UTF8
     if (Test-Path -LiteralPath $cfg.app) {
+        $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
         Start-Process -FilePath $cfg.app -ArgumentList @('--data-dir',('"' + $cfg.root + '"')) -WindowStyle Normal
     }
 }

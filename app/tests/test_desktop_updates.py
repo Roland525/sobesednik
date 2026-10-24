@@ -53,7 +53,8 @@ class UpdateTests(unittest.TestCase):
   from desktop.updates import helper_script
   script=helper_script(Path("C:/A user's data/update.json"))
   self.assertIn("A user''s data",script)
-  self.assertLess(script.index('Wait-Process'),script.index('Get-FileHash'))
+  self.assertLess(script.index('Wait-Process'),script.index('ComputeHash'))
+  self.assertIn('PYINSTALLER_RESET_ENVIRONMENT',script)
   self.assertIn('ExitCode',script);self.assertIn('/VERYSILENT',script)
   self.assertIn('--resume-after-update',script);self.assertIn('Start-Process',script)
  def test_launch_uses_argv_and_keeps_secrets_out_of_helper(self):
