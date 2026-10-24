@@ -72,6 +72,26 @@ class Views:
 
     def settings_view(self):
         page_widget,body=page('Голос и ответы','Настройте звучание и поведение. Изменения параметров применяются после перезапуска бота.')
+        block,layout=card('Модель и скорость ответа')
+        form=QFormLayout(); form.setSpacing(15)
+        self.model_choice=QComboBox(); form.addRow('Разговорная модель',self.model_choice)
+        self.response_choice=QComboBox()
+        for title,value in [('Быстрый · минимум задержки','fast'),('Баланс · обычный разговор','balanced'),
+                            ('Обдуманный · сложные вопросы, дольше','thoughtful'),('Свои параметры','custom')]:
+            self.response_choice.addItem(title,value)
+        form.addRow('Скорость ответа',self.response_choice); layout.addLayout(form)
+        layout.addWidget(row(button('Сохранить',self.save_settings,True),
+                             button('Сохранить и перезапустить',lambda:self.save_settings(True)),None))
+        self.model_status=label('Нажмите «Обновить список», чтобы проверить установленные модели.','subtitle'); layout.addWidget(self.model_status)
+        layout.addWidget(row(button('Обновить список',self.refresh_models),None))
+        from .models import CATALOG
+        self.model_download=QComboBox()
+        for name,title in CATALOG: self.model_download.addItem(title,name)
+        self.model_cancel=button('Отменить загрузку',self.cancel_operation); self.model_cancel.setEnabled(False)
+        layout.addWidget(row(self.model_download,button('Скачать модель',self.download_model,True),self.model_cancel))
+        self.model_progress=QProgressBar(); self.model_progress.setRange(0,100); self.model_progress.setValue(0); layout.addWidget(self.model_progress)
+        layout.addWidget(label('Скорость ответа — пауза до начала речи; темп речи настраивается ниже. Быстрый режим сокращает распознавание и синтез, не ускоряя голос. Дополнительная проверка включается только для сложных вопросов. Маленькие модели быстрее, но могут чаще ошибаться.','subtitle'))
+        body.addWidget(block)
         block,layout=card('Голос')
         form=QFormLayout(); form.setSpacing(15)
         self.wake_input=QLineEdit(); self.wake_input.setMaxLength(50); form.addRow('Имя обращения',self.wake_input)
@@ -85,6 +105,7 @@ class Views:
         self.length=QSpinBox(); self.length.setRange(80,2000); self.length.setSingleStep(80); form.addRow('Максимум символов ответа',self.length)
         self.history=QSpinBox(); self.history.setRange(1,30); form.addRow('Хранить пар реплик в контексте',self.history)
         self.reasoning=QCheckBox('Дополнительное обдумывание · может увеличить задержку'); form.addRow(self.reasoning)
+        self.response_choice.currentIndexChanged.connect(self.response_profile_changed)
         self.dota=QCheckBox('Разрешить чтение официальных патчноутов Valve'); form.addRow(self.dota)
         layout.addLayout(form); layout.addWidget(label('Простые вопросы остаются краткими. Большое объяснение можно попросить словами «подробно» или «по шагам». Команда «заткнись» останавливает речь; новое обращение по имени снова разрешает ответ.','subtitle'))
         body.addWidget(block)
@@ -99,11 +120,16 @@ class Views:
         block,layout=card('Контекст текущего разговора')
         layout.addWidget(label('Загрузите историю выбранного сервера. Можно исправить реплики или сбросить разговор. Каждая новая реплика начинается с «Человек:» или «Собеседник:». Это не изменяет постоянную память.','subtitle'))
         self.context_edit=QPlainTextEdit(); self.context_edit.setMinimumHeight(170); self.context_edit.setPlaceholderText('Человек: О чём мы говорили?\nСобеседник: О локальных моделях.'); layout.addWidget(self.context_edit)
+        layout.addWidget(label('«Загрузить» показывает текущий разговор. Для изменения нажмите «Применить». После перезапуска этот контекст очищается; важные факты сохраните в разделе «Память». Персона сохраняется отдельно и действует после перезапуска.','subtitle'))
         layout.addWidget(row(button('Загрузить контекст',self.load_context),button('Применить',self.save_context),button('Сбросить разговор',lambda:self.command('reset'),danger=True),None)); body.addWidget(block)
         body.addStretch(); return page_widget
 
     def memory_view(self):
         page_widget,body=page('Память','Посмотрите, какие сведения сохранены, кто их сообщил и к кому они относятся.')
+        block,layout=card('Добавить постоянную заметку')
+        self.memory_input=QLineEdit(); self.memory_input.setMaxLength(400); self.memory_input.setPlaceholderText('Например: по пятницам мы играем в шахматы')
+        layout.addWidget(self.memory_input); layout.addWidget(row(button('Сохранить в память',self.add_memory,True),None))
+        layout.addWidget(label('Заметка сохраняется для выбранного сервера и переживает перезапуск. Автор — владелец через панель. Для голоса: «Собеседник, запомни: …».','subtitle')); body.addWidget(block)
         block,layout=card()
         self.memory_kind=QComboBox(); self.memory_kind.addItem('Сведения','notes'); self.memory_kind.addItem('Участники','people'); self.memory_kind.addItem('Учебные примеры','examples')
         self.search=QLineEdit(); self.search.setPlaceholderText('Поиск по имени или содержимому'); self.search.textChanged.connect(self.filter_memory)

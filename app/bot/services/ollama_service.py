@@ -83,6 +83,7 @@ class OllamaService:
         self.lock = asyncio.Lock()
         self.last_ms = {}
         self.ready = False
+        self.supports_thinking = True
 
     @property
     def options(self):
@@ -94,8 +95,11 @@ class OllamaService:
     async def health(self):
         response = await self.client.get('/api/tags')
         response.raise_for_status()
-        return any(item['name'] == self.config.ollama_model and item.get('size', 0) > 0
-                   and not item.get('remote_host') for item in response.json().get('models', []))
+        for item in response.json().get('models', []):
+            if item['name'].casefold()==self.config.ollama_model.casefold() and item.get('size',0)>0 and not item.get('remote_host'):
+                self.supports_thinking='thinking' in item.get('capabilities',['thinking'])
+                return True
+        return False
 
     async def warmup(self):
         from ..conversation import Conversation
@@ -138,7 +142,7 @@ class OllamaService:
             char_limit = min(char_limit, self.config.max_response_chars)
             options = dict(self.options)
             options['num_predict'] = min(token_limit, self.config.ollama_num_predict)
-            reasoning = self.config.ollama_reasoning and needs_reasoning(text)
+            reasoning = self.config.ollama_reasoning and self.supports_thinking and needs_reasoning(text)
             timings['llm_reasoning_enabled'] = int(reasoning)
             if reasoning:
                 options['num_predict'] += self.config.ollama_reasoning_budget

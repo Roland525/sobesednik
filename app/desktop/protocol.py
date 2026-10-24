@@ -6,9 +6,9 @@ import secrets
 import time
 import uuid
 from pathlib import Path
-from .storage import atomic_json
+from .storage import atomic_json, read_shared
 
-OPERATIONS={'join','leave','mute','reset','replace_context','memory_delete','memory_forget',
+OPERATIONS={'join','leave','mute','reset','replace_context','memory_add','memory_delete','memory_forget',
             'memory_clear','learning_delete','learning_clear'}
 
 
@@ -45,7 +45,7 @@ class Protocol:
 
     def status(self):
         try:
-            data=json.loads((self.directory/'state.json').read_text(encoding='utf-8'))
+            data=json.loads(read_shared(self.directory/'state.json'))
             if time.time()-float(data.get('updated',0))>8: return {}
             return data
         except (OSError,ValueError,TypeError): return {}
@@ -53,5 +53,5 @@ class Protocol:
     def response(self, rid):
         path=self.responses/(rid+'.json')
         if not path.exists(): return None
-        try: return json.loads(path.read_text(encoding='utf-8'))
+        try: return json.loads(read_shared(path))
         finally: path.unlink(missing_ok=True)

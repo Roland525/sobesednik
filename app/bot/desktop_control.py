@@ -15,7 +15,7 @@ class DesktopControl:
         if not guild: raise ValueError('Сервер не найден. Обновите список.')
         if op=='join':
             channel=guild.get_channel(int(payload.get('channel',0)))
-            if not channel or int(channel.type)!=2: raise ValueError('Голосовой канал не найден')
+            if not channel or getattr(channel.type,'value',channel.type)!=2: raise ValueError('Голосовой канал не найден')
             permissions=channel.permissions_for(guild.me)
             if not permissions.view_channel or not permissions.connect:
                 raise ValueError('У бота нет права просматривать этот канал или подключаться к нему')
@@ -41,8 +41,11 @@ class DesktopControl:
                 await session.reset()
                 if op=='replace_context':
                     session.conversation.history.extend(messages); session.conversation.trim()
-        elif op in ('memory_delete','memory_forget','memory_clear','learning_delete','learning_clear'):
+                    kept=len(session.conversation.history)
+                    return f'Контекст применён: {kept} из {len(messages)} реплик. Старые реплики сверх лимита удалены.' if kept<len(messages) else f'Контекст применён: {kept} реплик.'
+        elif op in ('memory_add','memory_delete','memory_forget','memory_clear','learning_delete','learning_clear'):
             self.profile.mutate_memory(op,payload)
+            if op=='memory_add': return 'Заметка сохранена в постоянной памяти'
             if self.bot.memory: self.bot.memory.pending_facts.clear()
             if self.bot.learning:
                 self.bot.learning.humans.pop(guild.id,None)
@@ -70,7 +73,7 @@ class DesktopControl:
         for gid,session in self.bot.sessions.items():
             sessions[str(gid)]={'context':[{'role':m['role'],'content':redact(m['content'],token)}
                 for m in list(session.conversation.history)[-60:]],
-                'metrics':session.last_metrics,'muted':getattr(session,'muted',False)}
+                'metrics':dict(session.last_metrics),'muted':getattr(session,'muted',False)}
         return {'updated':time.time(),'pid':os.getpid(),'ready':self.bot.is_ready(),
                 'guilds':guilds,'sessions':sessions,'name':self.bot.config.bot_name,
                 'learning_maintenance':bool(self.bot.learning_request)}
@@ -89,7 +92,9 @@ class DesktopControl:
                 atomic_json(self.protocol.responses/path.name,result)
             except (OSError,ValueError): pass
             finally: path.unlink(missing_ok=True)
-        atomic_json(self.protocol.directory/'state.json',self.state())
+        # Windows replacement retries must not pause the Discord voice loop.
+        state=self.state()
+        await asyncio.to_thread(atomic_json,self.protocol.directory/'state.json',state)
         for path in self.protocol.responses.glob('*.json'):
             if time.time()-path.stat().st_mtime>300: path.unlink(missing_ok=True)
 

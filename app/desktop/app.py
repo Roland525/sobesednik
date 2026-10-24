@@ -82,7 +82,7 @@ class MainWindow(QMainWindow,Views):
         self.navigation.addItems(['Обзор','Discord','Голос и ответы','Персона','Память','Журнал'])
         side.addWidget(self.navigation,1)
         side.addWidget(label('Локальные модели\nВаш компьютер. Ваши данные.','subtitle'))
-        side.addWidget(label('Windows · версия 1.0.1','eyebrow')); outer.addWidget(sidebar)
+        side.addWidget(label('Windows · версия 1.0.2','eyebrow')); outer.addWidget(sidebar)
         content=QWidget(); content_layout=QVBoxLayout(content); content_layout.setContentsMargins(30,22,26,20); content_layout.setSpacing(17)
         self.guild_box=QComboBox(); self.guild_box.setMinimumWidth(230); self.guild_box.addItem('Сервер появится после запуска','')
         self.status_label=label('Остановлен','status',False)
@@ -106,6 +106,7 @@ class MainWindow(QMainWindow,Views):
         if start_timers: self.refresh_timer.start(750); self.resource_timer.start(3500)
         self.refresh()
         if start_timers: QTimer.singleShot(100,self.refresh_resources)
+        if start_timers and self.runtime.installed(): QTimer.singleShot(300,self.refresh_models)
 
     def notice(self,text):
         self.notice_label.setText(redact(text,self.token)); self.notice_label.setVisible(bool(text))
@@ -119,7 +120,14 @@ class MainWindow(QMainWindow,Views):
         task.progress.connect(self.install_update)
         def failed(message):
             self.notice(message)
-            self.install_update(self.install_progress.value(),'Ошибка',message)
+            if self.cancel_install.isEnabled():
+                self.install_update(self.install_progress.value(),'Ошибка',message)
+            else:
+                try:
+                    folder=self.profile.root/'logs'; folder.mkdir(exist_ok=True)
+                    with (folder/'desktop-panel.log').open('a',encoding='utf-8') as log:
+                        log.write(time.strftime('%Y-%m-%d %H:%M:%S')+' '+redact(message,self.token)+'\n')
+                except OSError: pass
             if self.close_requested:
                 self.close_requested=False; self.refresh_timer.start(750); self.resource_timer.start(3500)
         task.error.connect(failed)
@@ -135,18 +143,21 @@ class MainWindow(QMainWindow,Views):
     def reload_forms(self):
         try:
             cfg=self.profile.settings()
+            self.populate_models(getattr(self,'installed_model_names',[]),cfg['ollama_model'])
+            self.response_choice.setCurrentIndex(max(0,self.response_choice.findData(cfg['response_profile'])))
             self.wake_input.setText(cfg['wake_word']); self.voice_choice.setCurrentText(cfg['tts_supertonic_voice'])
             self.speed.setValue(cfg['tts_speed']); self.volume.setValue(cfg['tts_volume'])
             self.length.setValue(cfg['max_response_chars']); self.history.setValue(cfg['history_turns'])
             index=self.mode_choice.findData(cfg['conversation_mode']); self.mode_choice.setCurrentIndex(max(0,index))
             self.reasoning.setChecked(cfg['ollama_reasoning']); self.dota.setChecked(cfg['dota_patch_source_enabled'])
+            self.reasoning.setEnabled(cfg['response_profile']=='custom')
             self.remember_channel.blockSignals(True)
             self.remember_channel.setChecked(bool(cfg['auto_join_channel_id']))
             self.remember_channel.blockSignals(False)
             self.persona_edit.setPlainText(self.profile.persona()); self.folder_label.setText(str(self.profile.root))
             self.token_status.setText(('Защищённый токен сохранён' if (self.profile.root/'discord-token.bin').exists()
                 else 'Найден токен прежней установки. Можно проверить и защитить его здесь.') if self.token else 'Токен ещё не сохранён')
-            self.learning_label.setText('Постоянная память включена. Сбор примеров: '+('включён' if cfg['learning_capture_enabled'] else 'выключен')+
+            self.learning_label.setText('Постоянная память '+('включена' if cfg['memory_enabled'] else 'выключена')+'. Сбор примеров: '+('включён' if cfg['learning_capture_enabled'] else 'выключен')+
                 '. Автоматическое LoRA-обучение: '+('включено' if cfg['learning_auto_enabled'] else 'выключено')+
                 '. Кандидат применяется только после проверки качества ответов и задержки.')
         except Exception as error: self.notice('Не удалось открыть настройки: '+str(error))
@@ -197,6 +208,7 @@ class MainWindow(QMainWindow,Views):
         self.hush_button.setEnabled(bool(self.state) and not self.busy)
         self.install_button.setEnabled(not running and not self.busy)
         self.learning_install.setEnabled(not running and not self.busy and self.runtime.installed())
+        self.model_cancel.setEnabled(self.busy)
         if self.state: self.update_guilds(self.state.get('guilds',[]))
         else: self.guild_changed()
         if self.runtime.installed():
@@ -232,6 +244,8 @@ class MainWindow(QMainWindow,Views):
 
     def install_update(self,percent,title,line):
         self.install_progress.setValue(percent); self.install_stage.setText(title)
+        if title=='Загрузка модели':
+            self.model_progress.setValue(percent); self.model_status.setText(line)
         if line:
             clean=redact(line,self.token)
             self.install_log.appendPlainText(clean)
@@ -254,7 +268,14 @@ class MainWindow(QMainWindow,Views):
 
     def save_settings(self,restart=False):
         try:
-            self.profile.save_settings({'wake_word':self.wake_input.text().strip(),
+            model=self.model_choice.currentData()
+            # Existing selection can be saved offline; changing it requires a
+            # confirmed local model, never an arbitrary cloud endpoint.
+            if model!=self.profile.settings()['ollama_model'] and model.casefold() not in {
+                    item.casefold() for item in getattr(self,'installed_model_names',[])}:
+                raise ValueError('Сначала скачайте модель и обновите список.')
+            self.profile.save_settings({'ollama_model':model,'response_profile':self.response_choice.currentData(),
+                'wake_word':self.wake_input.text().strip(),
                 'tts_supertonic_voice':self.voice_choice.currentText(),'tts_speed':self.speed.value(),
                 'tts_volume':self.volume.value(),'conversation_mode':self.mode_choice.currentData(),
                 'max_response_chars':self.length.value(),'history_turns':self.history.value(),
@@ -262,6 +283,46 @@ class MainWindow(QMainWindow,Views):
             self.notice('Настройки сохранены. Для применения перезапустите бота.')
             if restart and self.runtime.running(): self.restart_bot()
         except Exception as error: self.notice(str(error))
+
+    def populate_models(self,names,selected=None):
+        from .models import CATALOG
+        selected=selected or self.model_choice.currentData() or self.profile.settings()['ollama_model']
+        titles=dict(CATALOG); self.model_choice.clear()
+        for name in dict.fromkeys([*names,selected]):
+            title=titles.get(name,name)
+            installed=any(n.casefold()==name.casefold() for n in names)
+            self.model_choice.addItem(title+(' · установлена' if installed else ' · текущая'),name)
+        self.model_choice.setCurrentIndex(max(0,self.model_choice.findData(selected)))
+
+    def response_profile_changed(self):
+        from bot.config import RESPONSE_PROFILES
+        profile=self.response_choice.currentData()
+        self.reasoning.setEnabled(profile=='custom')
+        if profile in RESPONSE_PROFILES:
+            self.reasoning.setChecked(RESPONSE_PROFILES[profile]['ollama_reasoning'])
+
+    def refresh_models(self):
+        def fetch(_):
+            from .models import installed_models
+            self.runtime.ensure_ollama(self.cancel)
+            return installed_models('http://127.0.0.1:11434')
+        def done(names):
+            self.installed_model_names=names; self.populate_models(names)
+            self.model_status.setText(f'Локально установлено моделей: {len(names)}. Выбор применяется после сохранения и перезапуска.')
+        self.run_job(fetch,done)
+
+    def download_model(self):
+        name=self.model_download.currentData()
+        def download(task):
+            from .models import pull_model,installed_models
+            self.runtime.ensure_ollama(self.cancel)
+            pull_model('http://127.0.0.1:11434',name,task.progress.emit,self.cancel)
+            return installed_models('http://127.0.0.1:11434')
+        def done(names):
+            self.installed_model_names=names; self.populate_models(names,name)
+            self.model_progress.setValue(100); self.model_status.setText('Модель скачана. Нажмите «Сохранить и перезапустить», чтобы использовать её.')
+        self.run_job(download,done)
+        self.cancel_install.setEnabled(self.busy)
 
     def save_persona(self):
         try: self.profile.save_persona(self.persona_edit.toPlainText()); self.notice('Персона сохранена. Новые вопросы используют обновлённое описание.')
@@ -361,12 +422,23 @@ class MainWindow(QMainWindow,Views):
         except Exception as error: self.notice(str(error))
 
     def load_context(self):
-        messages=self.state.get('sessions',{}).get(str(self.guild_id()),{}).get('context',[])
+        current=self.protocol.status()
+        session=current.get('sessions',{}).get(str(self.guild_id()))
+        if session is None:
+            self.notice('Нет активного разговора на выбранном сервере. Существующий текст оставлен в редакторе.'); return
+        messages=session.get('context',[])
         self.context_edit.setPlainText(context_text(messages)); self.notice('Загружен текущий контекст выбранного сервера.')
 
     def save_context(self):
         try: self.command('replace_context',{'messages':parse_context(self.context_edit.toPlainText())})
         except Exception as error: self.notice(str(error))
+
+    def add_memory(self):
+        text=self.memory_input.text().strip(); guild=self.guild_id()
+        if not guild: self.notice('Сначала выберите сервер вверху окна.'); return
+        def done(_):
+            self.memory_input.clear(); self.notice('Заметка записана в постоянную память.'); self.refresh_memory()
+        self.run_job(lambda _:self.profile.mutate_memory('memory_add',{'guild':guild,'content':text}),done)
 
     def refresh_memory(self,*args):
         if not hasattr(self,'memory_table'): return

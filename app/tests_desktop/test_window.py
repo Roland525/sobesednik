@@ -86,3 +86,28 @@ class WindowTests(unittest.TestCase):
         self.window.reload_forms()
         self.window.remember_channel.setChecked(False)
         self.assertEqual(self.window.profile.settings()['auto_join_channel_id'],0)
+
+    def test_response_model_and_profile_are_saved_separately_from_speech_speed(self):
+        self.window.installed_model_names=['huihui_ai/qwen3-abliterated:4b','huihui_ai/qwen3-abliterated:8b']
+        self.window.populate_models(self.window.installed_model_names,'huihui_ai/qwen3-abliterated:4b')
+        self.window.response_choice.setCurrentIndex(self.window.response_choice.findData('fast'))
+        self.window.speed.setValue(1.06)
+        self.window.save_settings()
+        cfg=self.window.profile.settings()
+        self.assertEqual(cfg['ollama_model'],'huihui_ai/qwen3-abliterated:4b')
+        self.assertEqual(cfg['response_profile'],'fast');self.assertEqual(cfg['tts_speed'],1.06)
+
+    def test_load_context_reads_fresh_state_and_keeps_unsaved_text_when_offline(self):
+        self.window.guild_box.addItem('Test','1');self.window.guild_box.setCurrentIndex(self.window.guild_box.findData('1'))
+        self.window.state={'sessions':{'1':{'context':[{'role':'user','content':'stale'}]}}}
+        with patch.object(self.window.protocol,'status',return_value={'sessions':{'1':{'context':[{'role':'user','content':'fresh'}]}}}):
+            self.window.load_context()
+        self.assertIn('fresh',self.window.context_edit.toPlainText())
+        with patch.object(self.window.protocol,'status',return_value={}):self.window.load_context()
+        self.assertIn('fresh',self.window.context_edit.toPlainText())
+
+    def test_persona_save_is_durable_and_independent_of_context(self):
+        self.window.persona_edit.setPlainText('Общайся кратко и по делу.')
+        self.window.save_persona();self.window.context_edit.setPlainText('Человек: Другая тема')
+        from desktop.storage import Profile
+        self.assertIn('кратко',Profile(self.window.profile.root).persona())

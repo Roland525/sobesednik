@@ -127,12 +127,17 @@ class Conversation:
         if memory_context:
             system += '\n\n' + MEMORY_RULES
             memory = [{'role': 'user', 'content': MEMORY_MARKER + memory_context}]
-            reserve = self.config.ollama_num_predict + (self.config.ollama_reasoning_budget if self.config.ollama_reasoning else 0)
-            # Conservative character estimate; leave room for memory and generation.
-            budget = max(0, int((self.config.ollama_num_ctx - reserve) * 2.5)
-                         - len(system) - len(memory[0]['content']) - len(content))
-            while history and sum(len(item['content']) for item in history) > budget:
-                history = history[2:]
+        reserve = self.config.ollama_num_predict + (self.config.ollama_reasoning_budget if self.config.ollama_reasoning else 0)
+        # Apply the budget even when no durable memory matches. Otherwise an
+        # imported history can force Ollama to truncate the persona/current turn.
+        budget = max(0, int((self.config.ollama_num_ctx - reserve) * 2.5)
+                     - len(system) - sum(len(m['content']) for m in memory) - len(content))
+        trimmed = False
+        while history and sum(len(item['content']) for item in history) > budget:
+            history.pop(0)
+            trimmed = True
+        while trimmed and history and history[0]['role']=='assistant':
+            history.pop(0)
         return [{'role': 'system', 'content': system}, *memory, *history, user]
 
     def commit(self, messages, response, include_user=True):

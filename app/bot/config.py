@@ -7,6 +7,16 @@ import ipaddress
 
 ROOT = Path(__file__).resolve().parents[1]
 
+RESPONSE_PROFILES = {
+    'fast': {'ollama_reasoning': True, 'ollama_reasoning_budget': 256, 'ollama_num_gpu': -1, 'ollama_num_ctx': 4096,
+             'whisper_beam_size': 1, 'speech_end_delay': .30, 'tts_supertonic_steps': 6},
+    'balanced': {'ollama_reasoning': True, 'ollama_reasoning_budget': 256, 'ollama_num_gpu': -1, 'ollama_num_ctx': 4096,
+                 'whisper_beam_size': 2, 'speech_end_delay': .38, 'tts_supertonic_steps': 8},
+    'thoughtful': {'ollama_reasoning': True, 'ollama_reasoning_budget': 384,
+                   'ollama_num_gpu': -1, 'ollama_num_ctx': 6144,
+                   'whisper_beam_size': 3, 'speech_end_delay': .42, 'tts_supertonic_steps': 8},
+}
+
 
 @dataclass
 class Config:
@@ -23,6 +33,7 @@ class Config:
     ollama_timeout: float = 40.0
     ollama_reasoning: bool = False
     ollama_reasoning_budget: int = 256
+    response_profile: str = 'custom'
     dota_patch_source_enabled: bool = False
     memory_enabled: bool = True
     learning_capture_enabled: bool = False
@@ -82,6 +93,8 @@ class Config:
                 raise ValueError(f'{item.name} должен быть строкой')
         if self.learning_auto_enabled and not self.learning_capture_enabled:
             raise ValueError('Автообучение требует learning_capture_enabled.')
+        if self.response_profile not in ('custom', *RESPONSE_PROFILES):
+            raise ValueError('Неизвестный режим скорости ответа')
         host = urlsplit(self.ollama_host)
         try:
             loopback = host.hostname == 'localhost' or ipaddress.ip_address(host.hostname or '').is_loopback

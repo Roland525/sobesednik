@@ -23,6 +23,17 @@ class DesktopProtocolTests(unittest.TestCase):
 
 
 class DesktopControlTests(unittest.IsolatedAsyncioTestCase):
+    async def test_join_accepts_actual_discord_channel_type_enum(self):
+        import discord
+        from bot.desktop_control import DesktopControl
+        with tempfile.TemporaryDirectory() as folder:
+            channel=NS(type=discord.ChannelType.voice,permissions_for=lambda member:NS(view_channel=True,connect=True))
+            guild=NS(id=1,me=object(),get_channel=lambda value:channel)
+            bot=NS(get_guild=lambda value:guild,join_channel=AsyncMock())
+            control=DesktopControl(bot,Path(folder))
+            await control.dispatch('join',{'guild':1,'channel':2})
+            bot.join_channel.assert_awaited_once_with(channel)
+
     async def test_context_replacement_rejects_system_and_resets_old_generation(self):
         from bot.desktop_control import DesktopControl
         with tempfile.TemporaryDirectory() as folder:

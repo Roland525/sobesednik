@@ -70,7 +70,8 @@ def person_key(text):
 def memory_request(text):
     """Return requested content, including empty content, or None for ordinary speech."""
     text = text.strip()
-    match = re.match(r'^(?:пожалуйста[, ]+)?(?:запомни|запоминай|(?:можешь|мог бы ты)\s+запомнить|'
+    match = re.match(r'^(?:(?:пожалуйста|слушай|смотри|ну)[, ]+)*(?:запомни|запоминай|(?:можешь|мог бы ты|можешь ли ты)\s+запомнить|'
+                     r'(?:я хочу|хочу|надо|нужно)[, ]+(?:чтобы ты )?запомнил|'
                      r'сохрани (?:это )?в памяти|запиши (?:это )?в память)\b\s*[:,—-]?\s*', text, re.I)
     if match:
         body = text[match.end():].strip(' ,.!?')
@@ -541,7 +542,8 @@ class MemoryStore:
         terms = search_terms(text)
         aliases = {name_key(word) for word in re.findall(r'\w+', normalized(text))} & set(_ALIASES.values())
         rows = [row for row in self.db.execute('SELECT * FROM notes WHERE guild=? ORDER BY updated DESC', (guild,))
-                if row['source'] == uid or row['target'] in ids or row['alias'] in aliases]
+                if row['source'] == uid or row['target'] in ids or row['alias'] in aliases
+                or row['source']==0 and bool(terms & search_terms(row['content']))]
         indexed = [(row, search_terms(row['content'])) for row in rows]
         counts = Counter(term for _, words in indexed for term in words)
         focus = relevant - {uid}
@@ -561,7 +563,7 @@ class MemoryStore:
                 continue
             author = self.profile(guild, row['source'])
             notes.append({'kind': row['kind'], 'source_id': row['source'],
-                          'source_nick': author['nick'] if author else 'участник',
+                          'source_nick': author['nick'] if author else ('владелец через панель' if row['source']==0 else 'участник'),
                           'target_id': row['target'], 'content': row['content']})
             if len(notes) >= 6:
                 break
