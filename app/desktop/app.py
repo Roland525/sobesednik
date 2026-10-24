@@ -70,6 +70,7 @@ class MainWindow(QMainWindow,Views):
         self.memory_reload=False; self.loaded_memory_key=None; self.last_memory_guild=None
         self.state={}; self.guilds=[]; self.memory_data=[]; self.token=''; self.account=None
         self.available_update=None; self.update_check_pending=False; self.updating=False
+        self.model_downloading=False;self.benchmark_running=False
         self.setWindowTitle('Собеседник — панель управления'); self.resize(1220,870); self.setMinimumSize(1040,720)
         self.setStyleSheet(STYLE)
         if self.payload.exists() and not self.runtime.running(): install_payload(self.payload,self.profile.root)
@@ -117,8 +118,9 @@ class MainWindow(QMainWindow,Views):
         self.remember_channel.toggled.connect(self.remember_changed)
         self.refresh_timer=QTimer(self); self.refresh_timer.timeout.connect(self.refresh)
         self.resource_timer=QTimer(self); self.resource_timer.timeout.connect(self.refresh_resources)
+        self.memory_timer=QTimer(self);self.memory_timer.timeout.connect(self.auto_refresh_memory)
         self.update_timer=QTimer(self); self.update_timer.timeout.connect(self.check_for_updates)
-        if start_timers: self.refresh_timer.start(750); self.resource_timer.start(3500)
+        if start_timers: self.refresh_timer.start(750); self.resource_timer.start(3500);self.memory_timer.start(4000)
         self.refresh()
         if start_timers: QTimer.singleShot(100,self.refresh_resources)
         if start_timers and self.runtime.installed(): QTimer.singleShot(300,self.refresh_models)
@@ -156,7 +158,7 @@ class MainWindow(QMainWindow,Views):
                         log.write(time.strftime('%Y-%m-%d %H:%M:%S')+' '+redact(message,self.token)+'\n')
                 except OSError: pass
             if self.close_requested:
-                self.close_requested=False; self.refresh_timer.start(750); self.resource_timer.start(3500)
+                self.close_requested=False; self.refresh_timer.start(750); self.resource_timer.start(3500);self.memory_timer.start(4000)
         task.error.connect(failed)
         if done: task.result.connect(done)
         def finished():
@@ -240,22 +242,23 @@ class MainWindow(QMainWindow,Views):
         try:
             cfg=self.profile.settings()
             self.populate_models(getattr(self,'installed_model_names',[]),cfg['ollama_model'])
-            self.response_choice.setCurrentIndex(max(0,self.response_choice.findData(cfg['response_profile'])))
+            self.resource_slider.setValue(cfg.get('resource_level',70));self.resource_level_changed()
             self.wake_input.setText(cfg['wake_word']); self.voice_choice.setCurrentText(cfg['tts_supertonic_voice'])
             self.speed.setValue(cfg['tts_speed']); self.volume.setValue(cfg['tts_volume'])
             self.length.setValue(cfg['max_response_chars']); self.history.setValue(cfg['history_turns'])
             index=self.mode_choice.findData(cfg['conversation_mode']); self.mode_choice.setCurrentIndex(max(0,index))
             self.reasoning.setChecked(cfg['ollama_reasoning']); self.dota.setChecked(cfg['dota_patch_source_enabled'])
-            self.reasoning.setEnabled(cfg['response_profile']=='custom')
             self.remember_channel.blockSignals(True)
             self.remember_channel.setChecked(bool(cfg['auto_join_channel_id']))
             self.remember_channel.blockSignals(False)
             self.persona_edit.setPlainText(self.profile.persona()); self.folder_label.setText(str(self.profile.root))
             self.token_status.setText(('Защищённый токен сохранён' if (self.profile.root/'discord-token.bin').exists()
                 else 'Найден токен прежней установки. Можно проверить и защитить его здесь.') if self.token else 'Токен ещё не сохранён')
-            self.learning_label.setText('Постоянная память '+('включена' if cfg['memory_enabled'] else 'выключена')+'. Сбор примеров: '+('включён' if cfg['learning_capture_enabled'] else 'выключен')+
-                '. Автоматическое LoRA-обучение: '+('включено' if cfg['learning_auto_enabled'] else 'выключено')+
-                '. Кандидат применяется только после проверки качества ответов и задержки.')
+            self.listen_conversation.setChecked(cfg.get('listen_conversation',True))
+            self.memory_auto_enabled.setChecked(cfg.get('memory_auto_enabled',True))
+            self.learning_capture_enabled.setChecked(cfg['learning_capture_enabled'])
+            self.learning_auto_enabled.setChecked(cfg['learning_auto_enabled'])
+            self.learning_capture_changed(cfg['learning_capture_enabled']);self.refresh_learning_status()
         except Exception as error: self.notice('Не удалось открыть настройки: '+str(error))
 
     def guild_id(self):
@@ -304,7 +307,9 @@ class MainWindow(QMainWindow,Views):
         self.hush_button.setEnabled(bool(self.state) and not self.busy)
         self.install_button.setEnabled(not running and not self.busy)
         self.learning_install.setEnabled(not running and not self.busy and self.runtime.installed())
-        self.model_cancel.setEnabled(self.busy)
+        self.model_cancel.setEnabled(self.model_downloading)
+        self.benchmark_cancel.setEnabled(self.benchmark_running)
+        self.update_model_actions()
         self.update_button.setEnabled(bool(self.available_update) and not self.busy and not self.updating)
         if self.state: self.update_guilds(self.state.get('guilds',[]))
         else: self.guild_changed()
@@ -344,6 +349,7 @@ class MainWindow(QMainWindow,Views):
             self.update_progress.setValue(percent); self.update_text.setText(line)
             if title=='Установка обновления': self.update_cancel.hide()
             return
+        if title=='Проверка модели':self.benchmark_result.setPlainText(line);return
         self.install_progress.setValue(percent); self.install_stage.setText(title)
         if title=='Загрузка модели':
             self.model_progress.setValue(percent); self.model_status.setText(line)
@@ -375,7 +381,7 @@ class MainWindow(QMainWindow,Views):
             if model!=self.profile.settings()['ollama_model'] and model.casefold() not in {
                     item.casefold() for item in getattr(self,'installed_model_names',[])}:
                 raise ValueError('Сначала скачайте модель и обновите список.')
-            self.profile.save_settings({'ollama_model':model,'response_profile':self.response_choice.currentData(),
+            self.profile.save_settings({'ollama_model':model,'response_profile':'custom','resource_level':self.resource_slider.value(),
                 'wake_word':self.wake_input.text().strip(),
                 'tts_supertonic_voice':self.voice_choice.currentText(),'tts_speed':self.speed.value(),
                 'tts_volume':self.volume.value(),'conversation_mode':self.mode_choice.currentData(),
@@ -386,44 +392,160 @@ class MainWindow(QMainWindow,Views):
         except Exception as error: self.notice(str(error))
 
     def populate_models(self,names,selected=None):
-        from .models import CATALOG
+        from .models import model_title
         selected=selected or self.model_choice.currentData() or self.profile.settings()['ollama_model']
-        titles=dict(CATALOG); self.model_choice.clear()
+        self.model_choice.blockSignals(True);self.model_choice.clear()
         for name in dict.fromkeys([*names,selected]):
-            title=titles.get(name,name)
+            size=getattr(self,'installed_model_sizes',{}).get(name.casefold())
             installed=any(n.casefold()==name.casefold() for n in names)
-            self.model_choice.addItem(title+(' · установлена' if installed else ' · текущая'),name)
+            status='установлена'+(f' {size/1024**3:.2f} ГиБ' if size else '') if installed else 'текущая'
+            self.model_choice.addItem(model_title(name)+' · '+status,name)
+            self.model_choice.setItemData(self.model_choice.count()-1,name,Qt.ToolTipRole)
         self.model_choice.setCurrentIndex(max(0,self.model_choice.findData(selected)))
+        self.model_choice.blockSignals(False);self.model_selection_changed()
 
-    def response_profile_changed(self):
-        from bot.config import RESPONSE_PROFILES
-        profile=self.response_choice.currentData()
-        self.reasoning.setEnabled(profile=='custom')
-        if profile in RESPONSE_PROFILES:
-            self.reasoning.setChecked(RESPONSE_PROFILES[profile]['ollama_reasoning'])
+    def model_selection_changed(self,*args):
+        self.update_model_actions()
+        if not hasattr(self,'model_detail'):return
+        from .models import model_detail
+        name=self.model_choice.currentData() or ''
+        details=getattr(self,'installed_model_metadata',{}).get(name.casefold(),{})
+        self.model_detail.setText(model_detail(name,getattr(self,'installed_model_sizes',{}).get(name.casefold()),details))
+        self.model_detail.setToolTip(name);self.model_choice.setToolTip(name)
+        self.load_saved_benchmark()
+
+    def load_saved_benchmark(self):
+        if not hasattr(self,'benchmark_result') or self.benchmark_running:return
+        from .model_benchmark import format_report,report_key
+        model=self.model_choice.currentData() or '';level=self.resource_slider.value()
+        paths=[self.profile.root/f'reports/model-benchmark-{report_key(model,level)}.json',self.profile.root/'reports/model-benchmark.json']
+        for path in paths:
+            try:
+                report=json.loads(path.read_text(encoding='utf-8-sig'))
+                if (report.get('model','').casefold()!=model.casefold() or report.get('resource_level')!=level
+                        or report.get('suite')!='synthetic-exact-v1'):continue
+                self.benchmark_result.setPlainText('Сохранённый локальный тест · '+str(report.get('created_utc','дата неизвестна'))+'\n'+format_report(report))
+                return
+            except (OSError,ValueError,KeyError,TypeError,AttributeError):continue
+        self.benchmark_result.setPlainText('Для этой модели при выбранных ресурсах сохранённого теста пока нет.')
+
+    def resource_level_changed(self,*args):
+        from bot.config import resource_settings
+        value=self.resource_slider.value();settings=resource_settings(value)
+        layers=settings['ollama_num_gpu']
+        gpu='CPU' if layers==0 else 'Все слои на GPU, если помещаются' if layers==-1 else f'До {layers} слоёв модели на GPU'
+        self.resource_description.setText(f"{value}/100 · модель: {settings['ollama_num_thread']} потоков CPU · распознавание: {settings['whisper_cpu_threads']} · синтез: {settings['tts_cpu_threads']} · {gpu}")
+        self.load_saved_benchmark()
+
+    def update_model_actions(self,*args):
+        if not hasattr(self,'model_download_button'):return
+        installed={name.casefold() for name in getattr(self,'installed_model_names',[])}
+        already=(self.model_download.currentData() or '').casefold() in installed
+        self.model_download.setToolTip(self.model_download.currentData() or '')
+        self.model_download_button.setText('Уже установлена' if already else 'Скачать модель')
+        self.model_download_button.setEnabled(not already and not self.busy)
+        self.model_download.setEnabled(not self.busy)
+        if hasattr(self,'benchmark_button'):
+            self.model_choice.setEnabled(not self.benchmark_running);self.resource_slider.setEnabled(not self.benchmark_running)
+            self.benchmark_button.setEnabled(not self.busy and not self.runtime.running() and
+                (self.model_choice.currentData() or '').casefold() in installed)
+
+    def accept_model_inventory(self,items,selected=None):
+        names=[item['name'] for item in items]
+        self.installed_model_names=names
+        self.installed_model_sizes={item['name'].casefold():item['size'] for item in items}
+        self.installed_model_metadata={item['name'].casefold():item.get('details',{}) for item in items}
+        self.populate_models(names,selected)
 
     def refresh_models(self):
         def fetch(_):
-            from .models import installed_models
+            from .models import installed_model_info
             self.runtime.ensure_ollama(self.cancel)
-            return installed_models('http://127.0.0.1:11434')
-        def done(names):
-            self.installed_model_names=names; self.populate_models(names)
-            self.model_status.setText(f'Локально установлено моделей: {len(names)}. Выбор применяется после сохранения и перезапуска.')
+            return installed_model_info('http://127.0.0.1:11434')
+        def done(items):
+            self.accept_model_inventory(items)
+            self.model_status.setText(f'Локально установлено моделей: {len(items)}. Выбор применяется после сохранения и перезапуска.')
         self.run_job(fetch,done)
 
     def download_model(self):
         name=self.model_download.currentData()
+        if name.casefold() in {item.casefold() for item in getattr(self,'installed_model_names',[])}:
+            self.update_model_actions();self.notice('Эта модель уже установлена. Выберите её в списке разговорных моделей.');return
+        if self.busy:self.notice('Дождитесь завершения текущей операции.');return
         def download(task):
-            from .models import pull_model,installed_models
+            from .models import pull_model,installed_model_info
             self.runtime.ensure_ollama(self.cancel)
             pull_model('http://127.0.0.1:11434',name,task.progress.emit,self.cancel)
-            return installed_models('http://127.0.0.1:11434')
-        def done(names):
-            self.installed_model_names=names; self.populate_models(names,name)
+            return installed_model_info('http://127.0.0.1:11434')
+        def done(items):
+            self.accept_model_inventory(items,name)
             self.model_progress.setValue(100); self.model_status.setText('Модель скачана. Нажмите «Сохранить и перезапустить», чтобы использовать её.')
-        self.run_job(download,done)
+        self.model_downloading=True
+        task=self.run_job(download,done)
+        if task:task.finished.connect(lambda:(setattr(self,'model_downloading',False),self.refresh()))
         self.cancel_install.setEnabled(self.busy)
+
+    def benchmark_model(self):
+        if self.runtime.running() or self.busy:
+            self.notice('Сначала остановите бота и дождитесь завершения операций.');return
+        model=self.model_choice.currentData()
+        if (model or '').casefold() not in {name.casefold() for name in getattr(self,'installed_model_names',[])}:
+            self.notice('Сначала обновите список и выберите установленную модель.');return
+        from .model_benchmark import run_benchmark,format_report,report_key
+        cfg=self.profile.settings();cfg.update(ollama_model=model,resource_level=self.resource_slider.value(),
+            ollama_reasoning=self.reasoning.isChecked())
+        self.benchmark_result.setPlainText('Проверка запускается… Используются текущие значения ползунка и выбранная модель.')
+        self.benchmark_running=True
+        def measure(task):
+            self.runtime.ensure_ollama(self.cancel)
+            return run_benchmark(cfg,self.cancel,lambda text:task.progress.emit(0,'Проверка модели',text))
+        def done(report):
+            key=report_key(model,cfg['resource_level'])
+            atomic_json(self.profile.root/f'reports/model-benchmark-{key}.json',report)
+            atomic_json(self.profile.root/'reports/model-benchmark.json',report)
+            self.benchmark_result.setPlainText(format_report(report))
+            self.notice('Локальный тест завершён. Полный отчёт: reports/model-benchmark.json.')
+        task=self.run_job(measure,done)
+        if task:
+            task.error.connect(lambda text:self.benchmark_result.setPlainText(text))
+            task.finished.connect(lambda:(setattr(self,'benchmark_running',False),self.refresh()))
+
+    def learning_capture_changed(self,enabled):
+        self.learning_auto_enabled.setEnabled(enabled)
+        if not enabled:self.learning_auto_enabled.setChecked(False)
+
+    def save_memory_settings(self):
+        try:
+            capture=self.learning_capture_enabled.isChecked()
+            self.profile.save_settings({'listen_conversation':self.listen_conversation.isChecked(),
+                'memory_auto_enabled':self.memory_auto_enabled.isChecked(),'learning_capture_enabled':capture,
+                'learning_auto_enabled':capture and self.learning_auto_enabled.isChecked()})
+            self.refresh_learning_status();self.notice('Параметры памяти и обучения сохранены. Перезапустите бота для применения.')
+        except Exception as error:self.notice(str(error))
+
+    def refresh_learning_status(self):
+        from bot.learning_cycle import compatible_training_model
+        cfg=self.profile.settings()
+        text=('Постоянная память: '+('включена' if cfg['memory_enabled'] else 'выключена')+
+              '. Автосохранение фактов: '+('включено' if cfg.get('memory_auto_enabled',True) else 'выключено')+
+              '. Сбор примеров: '+('включён' if cfg['learning_capture_enabled'] else 'выключен')+
+              '. Авто-LoRA: '+('включено' if cfg['learning_auto_enabled'] else 'выключено')+'. ')
+        status=None
+        for name in ('cycle-state.json','state.json'):
+            path=self.profile.root/'data/training'/name
+            if not path.exists():continue
+            try:status=json.loads(path.read_text(encoding='utf-8-sig')).get('status')
+            except (OSError,ValueError,AttributeError):status='unreadable'
+            break
+        labels={'running':'В журнале тренера: цикл выполняется.','accepted':'В журнале тренера: кандидат принят после проверки.',
+                'rejected':'В журнале тренера: кандидат отклонён.','failed':'В журнале тренера: цикл завершился ошибкой.',
+                'skipped':'В журнале тренера: цикл пропущен; проверьте данные и зависимости.'}
+        self.learning_label.setText(text+labels.get(status,'Подтверждённого результата обучения весов в журнале нет.')+
+            ' Среда тренера: '+('Python найден' if (self.profile.root/'.venv-training/Scripts/python.exe').is_file() else 'Python не найден')+
+            ' (это не проверка готовности всех зависимостей). Текущая модель: '+cfg['ollama_model']+
+            '. Авто-LoRA пока поддерживает только Qwen 3 · 8B и его обученные версии. '+
+            ('Текущая модель совместима.' if compatible_training_model(cfg['ollama_model']) else 'Для текущей модели обучение весов недоступно; память и примеры продолжают работать.')+
+            ' Включённый сбор примеров сам по себе не меняет веса.')
 
     def save_persona(self):
         try: self.profile.save_persona(self.persona_edit.toPlainText()); self.notice('Персона сохранена. Новые вопросы используют обновлённое описание.')
@@ -541,9 +663,19 @@ class MainWindow(QMainWindow,Views):
             self.memory_input.clear(); self.notice('Заметка записана в постоянную память.'); self.refresh_memory()
         self.run_job(lambda _:self.profile.mutate_memory('memory_add',{'guild':guild,'content':text}),done)
 
-    def refresh_memory(self,*args):
+    def auto_refresh_memory(self):
+        if self.pages.currentIndex()==4 and not self.busy and not self.memory_pending and not self.close_requested:
+            self.refresh_memory(automatic=True)
+
+    def refresh_memory(self,*args,automatic=False):
         if not hasattr(self,'memory_table'): return
-        self.loaded_memory_key=None; self.memory_data=[]; self.memory_table.setRowCount(0)
+        self.refresh_learning_status()
+        selected=None;scroll=self.memory_table.verticalScrollBar().value()
+        if automatic and self.loaded_memory_key==(self.memory_kind.currentData(),self.guild_id()):
+            index=self.memory_table.currentRow()
+            if 0<=index<len(self.memory_data):selected=self.memory_data[index].get('record_id')
+        else:self.memory_data=[];self.memory_table.setRowCount(0)
+        self.loaded_memory_key=None
         if self.memory_pending:
             self.memory_reload=True; return
         kind=self.memory_kind.currentData(); guild=self.guild_id(); self.memory_pending=True
@@ -551,6 +683,10 @@ class MainWindow(QMainWindow,Views):
         def done(rows):
             if not self.memory_reload and (kind,guild)==(self.memory_kind.currentData(),self.guild_id()):
                 self.memory_data=rows; self.loaded_memory_key=(kind,guild); self.fill_memory(kind)
+                if automatic:
+                    for index,record in enumerate(rows):
+                        if selected is not None and record.get('record_id')==selected:self.memory_table.selectRow(index);break
+                    self.memory_table.verticalScrollBar().setValue(scroll)
         task=Task(lambda _:self.profile.memory_rows(kind,guild),self.token,self); self.jobs.append(task)
         task.result.connect(done); task.error.connect(self.notice)
         def finish():
@@ -636,12 +772,12 @@ class MainWindow(QMainWindow,Views):
 
     def closeEvent(self,event):
         if self.force_close: self.profile_lock.unlock(); event.accept(); return
-        self.refresh_timer.stop(); self.resource_timer.stop()
+        self.refresh_timer.stop(); self.resource_timer.stop();self.memory_timer.stop()
         if self.jobs:
             self.close_requested=True; self.cancel.set(); self.notice('Завершаем фоновые операции перед закрытием…'); event.ignore(); return
         if self.runtime.running() and not self.close_requested:
             if QMessageBox.question(self,'Закрыть Собеседника?','Остановить бота и закрыть приложение?',QMessageBox.Yes|QMessageBox.No,QMessageBox.No)!=QMessageBox.Yes:
-                self.refresh_timer.start(750); self.resource_timer.start(3500); event.ignore(); return
+                self.refresh_timer.start(750); self.resource_timer.start(3500);self.memory_timer.start(4000); event.ignore(); return
         if self.runtime.running() or self.runtime.server:
             self.close_requested=True; self.run_job(lambda _:self.runtime.close()); event.ignore(); return
         self.runtime.stop(); self.profile_lock.unlock(); event.accept()

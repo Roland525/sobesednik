@@ -14,7 +14,7 @@ class SupertonicVoice:
         )] + [model / 'voice_styles' / f'{speaker}.json']
 
     @classmethod
-    def load(cls, model, speaker):
+    def load(cls, model, speaker, threads=4):
         if any(not path.is_file() for path in cls.required_files(model, speaker)):
             raise RuntimeError('Нет локальных файлов Supertonic. Выполните tools/download_models.py --tts-engine supertonic.')
         import onnxruntime as ort
@@ -22,7 +22,7 @@ class SupertonicVoice:
             TextToSpeech, load_cfgs, load_text_processor, load_onnx_all, load_voice_style,
         )
         options = ort.SessionOptions()
-        options.intra_op_num_threads = 4
+        options.intra_op_num_threads = threads
         options.inter_op_num_threads = 1
         directory = str(model / 'onnx')
         engine = TextToSpeech(load_cfgs(directory), load_text_processor(directory),

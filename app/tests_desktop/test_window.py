@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from PySide6.QtWidgets import QApplication,QLineEdit
+from PySide6.QtWidgets import QApplication,QLineEdit,QScrollArea,QSlider
 from PySide6.QtTest import QTest
 from PySide6.QtCore import Qt,QLockFile
 
@@ -87,15 +87,128 @@ class WindowTests(unittest.TestCase):
         self.window.remember_channel.setChecked(False)
         self.assertEqual(self.window.profile.settings()['auto_join_channel_id'],0)
 
-    def test_response_model_and_profile_are_saved_separately_from_speech_speed(self):
+    def test_resource_slider_and_model_are_saved_separately_from_speech_speed(self):
         self.window.installed_model_names=['huihui_ai/qwen3-abliterated:4b','huihui_ai/qwen3-abliterated:8b']
         self.window.populate_models(self.window.installed_model_names,'huihui_ai/qwen3-abliterated:4b')
-        self.window.response_choice.setCurrentIndex(self.window.response_choice.findData('fast'))
+        self.assertIsInstance(self.window.resource_slider,QSlider)
+        self.window.resource_slider.setValue(40)
         self.window.speed.setValue(1.06)
         self.window.save_settings()
         cfg=self.window.profile.settings()
         self.assertEqual(cfg['ollama_model'],'huihui_ai/qwen3-abliterated:4b')
-        self.assertEqual(cfg['response_profile'],'fast');self.assertEqual(cfg['tts_speed'],1.06)
+        self.assertEqual(cfg['response_profile'],'custom');self.assertEqual(cfg['tts_speed'],1.06)
+        self.assertEqual(cfg['resource_level'],40)
+
+    def test_installed_download_is_disabled_and_guarded(self):
+        name=self.window.model_download.itemData(0)
+        self.window.installed_model_names=[name.upper()]
+        self.window.model_download.setCurrentIndex(0)
+        self.window.refresh()
+        self.assertFalse(self.window.model_download_button.isEnabled())
+        self.assertIn('Уже установлена',self.window.model_download_button.text())
+        with patch.object(self.window,'run_job') as run:
+            self.window.download_model()
+        run.assert_not_called()
+        self.window.model_download.setCurrentIndex(1)
+        self.assertTrue(self.window.model_download_button.isEnabled())
+
+    def test_model_names_are_readable_and_technical_tag_is_in_tooltip(self):
+        name='huihui_ai/qwen3-abliterated:8b'
+        self.window.accept_model_inventory([{'name':name,'size':5*1024**3,
+            'details':{'parameter_size':'8.2B','quantization_level':'Q4_K_M'}}],name)
+        self.assertIn('Qwen 3 · 8B',self.window.model_choice.currentText())
+        self.assertIn('5.00 ГиБ',self.window.model_choice.currentText())
+        self.assertNotIn('huihui_ai',self.window.model_choice.currentText())
+        self.assertEqual(self.window.model_choice.toolTip(),name)
+        self.assertIn('8.2B',self.window.model_detail.text())
+        self.assertIn('Q4_K_M',self.window.model_detail.text())
+        self.assertNotIn('huihui_ai',self.window.model_download.itemText(0))
+
+    def test_saved_benchmark_is_shown_only_for_matching_model_and_resources(self):
+        import json
+        name='huihui_ai/qwen3-abliterated:8b'
+        self.window.populate_models([name,'huihui_ai/qwen3-abliterated:4b'],name)
+        self.window.resource_slider.setValue(70)
+        reports=self.window.profile.root/'reports';reports.mkdir(exist_ok=True)
+        (reports/'model-benchmark.json').write_text(json.dumps({'model':name,'resource_level':70,
+            'suite':'synthetic-exact-v1','created_utc':'2026-10-24T12:00:00Z'}),encoding='utf-8')
+        with patch('desktop.model_benchmark.format_report',return_value='8/8 verified'):
+            self.window.load_saved_benchmark()
+            self.assertIn('8/8 verified',self.window.benchmark_result.toPlainText())
+            self.window.resource_slider.setValue(40)
+            self.assertNotIn('8/8 verified',self.window.benchmark_result.toPlainText())
+            self.window.resource_slider.setValue(70)
+            self.assertIn('8/8 verified',self.window.benchmark_result.toPlainText())
+            self.window.model_choice.setCurrentIndex(self.window.model_choice.findData('huihui_ai/qwen3-abliterated:4b'))
+            self.assertNotIn('8/8 verified',self.window.benchmark_result.toPlainText())
+
+    def test_settings_toolbar_remains_visible_at_bottom_of_scroll(self):
+        self.window.navigation.setCurrentRow(2);self.app.processEvents()
+        scroll=self.window.pages.widget(2).findChild(QScrollArea)
+        scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
+        self.app.processEvents()
+        self.assertTrue(self.window.settings_save_button.isVisible())
+        self.assertFalse(scroll.isAncestorOf(self.window.settings_save_button))
+        self.assertTrue(self.window.settings_restart_button.isVisible())
+
+    def test_benchmark_cannot_start_while_bot_runs(self):
+        with patch.object(self.window.runtime,'running',return_value=True),patch.object(self.window,'run_job') as run:
+            self.window.benchmark_model()
+        run.assert_not_called()
+
+    def test_memory_preferences_are_saved_and_capture_disables_training(self):
+        self.window.listen_conversation.setChecked(False)
+        self.window.memory_auto_enabled.setChecked(False)
+        self.window.learning_capture_enabled.setChecked(True)
+        self.window.learning_auto_enabled.setChecked(True)
+        self.window.learning_capture_enabled.setChecked(False)
+        self.assertFalse(self.window.learning_auto_enabled.isChecked())
+        self.assertFalse(self.window.learning_auto_enabled.isEnabled())
+        self.window.save_memory_settings()
+        cfg=self.window.profile.settings()
+        self.assertFalse(cfg['listen_conversation']);self.assertFalse(cfg['memory_auto_enabled'])
+        self.assertFalse(cfg['learning_capture_enabled']);self.assertFalse(cfg['learning_auto_enabled'])
+
+    def test_enabled_training_does_not_claim_weights_were_trained(self):
+        self.window.profile.save_settings({'learning_capture_enabled':True,'learning_auto_enabled':True})
+        self.window.refresh_learning_status()
+        self.assertIn('Подтверждённого результата',self.window.learning_label.text())
+
+    def test_training_status_explains_qwen3_8b_compatibility(self):
+        self.window.profile.save_settings({'ollama_model':'huihui_ai/qwen3.5-abliterated:4B'})
+        self.window.refresh_learning_status()
+        self.assertIn('только Qwen 3 · 8B',self.window.learning_label.text())
+        self.assertIn('обучение весов недоступно',self.window.learning_label.text())
+
+    def test_memory_auto_refresh_only_runs_on_visible_idle_page(self):
+        self.window.memory_pending=False
+        with patch.object(self.window,'refresh_memory') as refresh:
+            self.window.auto_refresh_memory();refresh.assert_not_called()
+            self.window.pages.setCurrentIndex(4)
+            self.window.auto_refresh_memory();refresh.assert_called_once_with(automatic=True)
+            self.window.busy=True;self.window.auto_refresh_memory();self.assertEqual(refresh.call_count,1)
+            self.window.busy=False;self.window.memory_pending=True
+            self.window.auto_refresh_memory();self.assertEqual(refresh.call_count,1)
+        self.window.memory_pending=False
+
+    def test_memory_auto_refresh_keeps_selected_record_when_new_notes_arrive(self):
+        deadline=__import__('time').monotonic()+3
+        while self.window.memory_pending and __import__('time').monotonic()<deadline:
+            self.app.processEvents();QTest.qWait(10)
+        def note(identity):
+            return {'record_id':identity,'guild':1,'target_name':'Person','content':f'note {identity}',
+                    'author_name':'Author','updated':1,'kind':'fact'}
+        self.window.memory_data=[note(1)]
+        self.window.loaded_memory_key=(self.window.memory_kind.currentData(),self.window.guild_id())
+        self.window.fill_memory();self.window.memory_table.selectRow(0)
+        with patch.object(self.window.profile,'memory_rows',return_value=[note(2),note(1)]):
+            self.window.refresh_memory(automatic=True)
+            deadline=__import__('time').monotonic()+3
+            while self.window.memory_pending and __import__('time').monotonic()<deadline:
+                self.app.processEvents();QTest.qWait(10)
+        self.assertEqual(self.window.memory_table.rowCount(),2)
+        self.assertEqual(self.window.memory_table.currentRow(),1)
+        self.assertIn('note 1',self.window.memory_table.item(1,1).text())
 
     def test_load_context_reads_fresh_state_and_keeps_unsaved_text_when_offline(self):
         self.window.guild_box.addItem('Test','1');self.window.guild_box.setCurrentIndex(self.window.guild_box.findData('1'))

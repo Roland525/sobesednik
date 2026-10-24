@@ -55,6 +55,11 @@ class GuildSession:
         self.stt, self.llm, self.tts = stt, llm, tts
         self.logger, self.metrics = logger, metrics
         self.memory = memory
+        self.heard_context=deque(maxlen=16)
+        self.pending_memory=deque(maxlen=24)
+        self.memory_analysis=None
+        self.memory_epoch=0
+        self.last_heard_at=0.0
         self.voice_routes = voice_routes
         self.learning = learning
         self.conversation = Conversation(config)
@@ -105,6 +110,8 @@ class GuildSession:
             self.tasks = [asyncio.create_task(self.recognize(), name=f'stt-{self.guild_id}'),
                           asyncio.create_task(self.recognize_controls(), name=f'controls-{self.guild_id}'),
                           asyncio.create_task(self.initiative_loop(), name=f'initiative-{self.guild_id}')]
+            if self.memory and self.config.memory_auto_enabled:
+                self.tasks.append(asyncio.create_task(self.memory_loop(),name=f'memory-{self.guild_id}'))
             self.response_task = asyncio.create_task(self.respond(), name=f'reply-{self.guild_id}')
 
     async def attach(self, vc, target_user_id=None):
@@ -196,7 +203,7 @@ class GuildSession:
                 active = self.muted or (not self.require_wake_each_turn and
                                        (self.conversation.follows_up(uid) or self.responding))
                 start = time.monotonic()
-                text = await self.stt.transcribe(utterance.pcm, active=active or self.participant_mode or self.trace.active)
+                text = await self.stt.transcribe(utterance.pcm, active=active or self.participant_mode or self.trace.active or self.config.listen_conversation)
                 if generation != self.generation:
                     continue
                 if not text:
@@ -220,8 +227,6 @@ class GuildSession:
                     self.conversation.replied_to(uid)
                     self.enqueue(Question(uid, utterance.member.display_name, 'Слушаю.', utterance.ended, kind='say'))
                     continue
-                if self.require_wake_each_turn and not hit and not self.rare_mode:
-                    continue
                 if self.is_echo(text, utterance):
                     self.guard_counts['echo'] += 1
                     continue
@@ -233,13 +238,26 @@ class GuildSession:
                     self.guard_counts['duplicate'] += 1
                     continue
                 self.recent_inputs[uid] = (normalized, now)
-                if self.memory:
+                notice=''
+                _, memory_text=addressed(text,self.config.wake_word)
+                if hit or self.config.listen_conversation:
+                    self.last_heard_at=now
+                    self.heard_context.append((now,uid,utterance.member.display_name,memory_text))
+                if self.memory and self.config.memory_auto_enabled and (hit or self.config.listen_conversation):
                     try:
-                        _, memory_text = addressed(text, self.config.wake_word)
-                        self.memory.observe(self.guild_id, uid, utterance.member.display_name, memory_text,
-                                            getattr(utterance.member, 'name', ''))
+                        learned=self.memory.observe_auto(self.guild_id, uid, utterance.member.display_name, memory_text,
+                                                         getattr(utterance.member,'name',''))
+                        from .memory import observation_text
+                        if not learned and observation_text(memory_text):
+                            self.pending_memory.append((uid,utterance.member.display_name,memory_text,now))
                     except Exception as error:
                         self.logger.warning('Не удалось сохранить сведения участника: %s', type(error).__name__)
+                if self.learning and (hit or self.config.listen_conversation or self.conversation.follows_up(uid)):
+                    try: notice=self.learning.heard(self.guild_id,uid,memory_text)
+                    except Exception as error:
+                        self.logger.warning('Не удалось сохранить учебный пример: %s',type(error).__name__)
+                if self.require_wake_each_turn and not hit and not self.rare_mode:
+                    continue
                 if self.muted:
                     if not hit:
                         continue
@@ -247,16 +265,10 @@ class GuildSession:
                     if self.rare_mode:
                         self.quiet_mode = False
                         self.last_unsolicited_at = now
-                if self.learning:
-                    try:
-                        _, learning_text = addressed(text, self.config.wake_word)
-                        notice = self.learning.heard(self.guild_id, uid, learning_text)
-                        if notice:
-                            if hit or self.conversation.follows_up(uid):
-                                self.enqueue(Question(uid, utterance.member.display_name, notice, utterance.ended, kind='say'))
-                            continue
-                    except Exception as error:
-                        self.logger.warning('Не удалось сохранить учебный пример: %s', type(error).__name__)
+                if notice:
+                    if hit or self.conversation.follows_up(uid):
+                        self.enqueue(Question(uid,utterance.member.display_name,notice,utterance.ended,kind='say'))
+                    continue
                 if self.ignore_social_signal(uid, text, hit, now):
                     self.guard_counts['social'] += 1
                     continue
@@ -326,12 +338,62 @@ class GuildSession:
     def context_for(self, kind):
         return self.channel_conversation if self.rare_mode and kind.startswith('ambient') else self.conversation
 
+    def shared_context(self,uid,text):
+        if not self.config.listen_conversation: return ''
+        rows=[];size=0;now=time.monotonic()
+        for when,author,name,body in reversed(self.heard_context):
+            if now-when>180 or (author==uid and body==text): continue
+            name=re.sub(r'[\r\n\[\]:]',' ',name)[:64]
+            line=safe_output(f'[Участник {name}]: {body[:400]}',[self.config.discord_token])
+            if size+len(line)>1800: break
+            rows.append(line);size+=len(line)
+        return '\n'.join(reversed(rows))
+
+    async def memory_loop(self):
+        while not self.closed:
+            await asyncio.sleep(.5)
+            selector=getattr(self.llm,'select_memories',None)
+            if (not selector or not self.pending_memory or self.responding or not self.questions.empty()
+                    or time.monotonic()-self.last_heard_at<1.8): continue
+            batch=[]
+            while self.pending_memory and len(batch)<4:
+                item=self.pending_memory.popleft()
+                if time.monotonic()-item[3]<180: batch.append(item)
+            if not batch: continue
+            epoch=self.memory_epoch
+            self.memory_analysis=asyncio.create_task(selector([{'index':i,'speaker':name,'text':text}
+                for i,(_,name,text,_) in enumerate(batch)]))
+            try:
+                for fact in await self.memory_analysis:
+                    if epoch!=self.memory_epoch: break
+                    if not isinstance(fact,dict) or type(fact.get('index')) is not int: continue
+                    index=fact['index']
+                    if not 0<=index<len(batch): continue
+                    uid,name,original,_=batch[index]
+                    self.memory.save_observation(self.guild_id,uid,name,original,fact.get('quote'),fact.get('category'))
+            except asyncio.CancelledError:
+                if self.closed: raise
+                if epoch==self.memory_epoch:
+                    for item in reversed(batch):self.pending_memory.appendleft(item)
+            except Exception as error:
+                self.logger.warning('Фоновый отбор памяти отложен: %s',type(error).__name__)
+            finally:self.memory_analysis=None
+
+    def clear_observations(self):
+        # A cancelled selector can finish later; invalidate both its results and
+        # its retry batch before clearing queues (reset and participant deletion).
+        self.memory_epoch+=1
+        self.heard_context.clear()
+        self.pending_memory.clear()
+        if self.memory_analysis and not self.memory_analysis.done(): self.memory_analysis.cancel()
+
     def memory_turn(self, question):
         if question.kind not in ('voice', 'text'):
             return '', ''
         if not self.memory:
             if self.learning and re.fullmatch(r'(?:забудь (?:вс[её] )?обо мне|удали память обо мне|забудь вс[её])\s*[.!?]*', question.text, re.I):
                 self.learning.forget(self.guild_id, question.user_id)
+                self.clear_observations()
                 return 'Удалил связанные с тобой учебные примеры. Уже обученную версию потребуется переобучить.', ''
             if memory_request(question.text) is not None or re.match(r'^забудь\b', question.text, re.I):
                 return 'Постоянная память сейчас недоступна.' if self.config.memory_enabled else 'Постоянная память выключена.', ''
@@ -340,6 +402,7 @@ class GuildSession:
             self.refresh_memory_members()
             result = self.memory.handle(self.guild_id, question.user_id, question.name, question.text)
             if result.forget:
+                self.clear_observations()
                 if self.learning:
                     self.learning.forget(self.guild_id, question.user_id)
                 self.conversation.history.clear()
@@ -393,6 +456,7 @@ class GuildSession:
         return False
 
     async def submit_direct(self, question):
+        if self.memory_analysis and not self.memory_analysis.done(): self.memory_analysis.cancel()
         # A requested channel action must not wait behind a previous LLM answer.
         # Only explicit commands preempt; ordinary followups keep normal turn-taking.
         command = (memory_request(question.text) is not None
@@ -564,7 +628,9 @@ class GuildSession:
                         continue
                     messages = self.conversation.initiative_messages()
                 else:
-                    messages = self.context_for(question.kind).messages(question.user_id, question.name, question.text or '[обращение по имени]', memory_context=memory_context)
+                    learned=self.learning.context(self.guild_id,question.text) if self.learning and callable(getattr(self.learning,'context',None)) else ''
+                    messages = self.context_for(question.kind).messages(question.user_id, question.name, question.text or '[обращение по имени]', memory_context=memory_context,
+                        channel_context=self.shared_context(question.user_id,question.text),learning_context=learned if isinstance(learned,str) else '')
                 if memory_reply:
                     # The stored record is retrieved separately as bounded data.
                     # Do not keep raw memory instructions in conversational history.
@@ -723,6 +789,7 @@ class GuildSession:
                     item.future.cancel()
                 q.task_done()
         if clear_context:
+            self.clear_observations()
             if self.memory:
                 self.memory.cancel_pending(self.guild_id)
             self.conversation.reset()

@@ -1,13 +1,14 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLineEdit,QComboBox,
     QDoubleSpinBox,QSpinBox,QCheckBox,QPlainTextEdit,QProgressBar,QTableWidget,QHeaderView,
-    QAbstractItemView,QScrollArea)
+    QAbstractItemView,QScrollArea,QSlider)
 from .widgets import label,button,card,row,MetricCard
 
 
-def page(title,subtitle):
+def page(title,subtitle,toolbar=None):
     outer=QWidget(); layout=QVBoxLayout(outer); layout.setContentsMargins(0,0,0,0); layout.setSpacing(16)
     layout.addWidget(label(title,'title')); layout.addWidget(label(subtitle,'subtitle'))
+    if toolbar is not None: layout.addWidget(toolbar)
     scroll=QScrollArea(); scroll.setWidgetResizable(True)
     inner=QWidget(); body=QVBoxLayout(inner); body.setContentsMargins(0,5,10,8); body.setSpacing(16)
     scroll.setWidget(inner); layout.addWidget(scroll,1)
@@ -71,26 +72,47 @@ class Views:
         body.addWidget(block); body.addStretch(); return page_widget
 
     def settings_view(self):
-        page_widget,body=page('Голос и ответы','Настройте звучание и поведение. Изменения параметров применяются после перезапуска бота.')
-        block,layout=card('Модель и скорость ответа')
+        self.settings_save_button=button('Сохранить',self.save_settings,True)
+        self.settings_restart_button=button('Сохранить и перезапустить',lambda:self.save_settings(True))
+        self.settings_toolbar=row(self.settings_save_button,self.settings_restart_button,None)
+        page_widget,body=page('Голос и ответы','Настройте звучание и поведение. Изменения параметров применяются после перезапуска бота.',self.settings_toolbar)
+        block,layout=card('Модель и ресурсы компьютера')
         form=QFormLayout(); form.setSpacing(15)
-        self.model_choice=QComboBox(); form.addRow('Разговорная модель',self.model_choice)
-        self.response_choice=QComboBox()
-        for title,value in [('Быстрый · минимум задержки','fast'),('Баланс · обычный разговор','balanced'),
-                            ('Обдуманный · сложные вопросы, дольше','thoughtful'),('Свои параметры','custom')]:
-            self.response_choice.addItem(title,value)
-        form.addRow('Скорость ответа',self.response_choice); layout.addLayout(form)
-        layout.addWidget(row(button('Сохранить',self.save_settings,True),
-                             button('Сохранить и перезапустить',lambda:self.save_settings(True)),None))
+        self.model_choice=QComboBox();self.model_choice.setMinimumContentsLength(24)
+        self.model_choice.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.model_choice.currentIndexChanged.connect(self.model_selection_changed)
+        form.addRow('Разговорная модель',self.model_choice)
+        self.model_detail=label('','subtitle');form.addRow(self.model_detail)
+        self.resource_slider=QSlider(Qt.Horizontal); self.resource_slider.setRange(0,100); self.resource_slider.setSingleStep(5)
+        self.resource_slider.setAccessibleName('Ресурсы компьютера')
+        form.addRow('Ресурсы · 0 — экономно, 100 — максимум',self.resource_slider)
+        layout.addLayout(form)
+        self.resource_description=label('','subtitle');layout.addWidget(self.resource_description)
+        self.resource_slider.valueChanged.connect(self.resource_level_changed)
+        self.resource_help=label('Выше — больше потоков CPU и слоёв модели на GPU. Это бюджет, а не процент загрузки; 100 не гарантирует ускорение. Темп речи — отдельно.','subtitle')
+        self.resource_help.setToolTip('На 0 модель работает на CPU; 1–69 задаёт число слоёв на GPU; 70–100 разрешает все слои на GPU, если модель помещается в видеопамять. Нужны поддержка Ollama и подходящая видеокарта. Ползунок меняет потоки CPU модели, распознавания и синтеза. Больше потоков может замедлить ответ: влияют модель, свободная память, охлаждение и другие программы.')
+        layout.addWidget(self.resource_help)
         self.model_status=label('Нажмите «Обновить список», чтобы проверить установленные модели.','subtitle'); layout.addWidget(self.model_status)
         layout.addWidget(row(button('Обновить список',self.refresh_models),None))
         from .models import CATALOG
         self.model_download=QComboBox()
-        for name,title in CATALOG: self.model_download.addItem(title,name)
+        self.model_download.setMinimumContentsLength(24);self.model_download.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        for name,title in CATALOG:
+            self.model_download.addItem(title,name);self.model_download.setItemData(self.model_download.count()-1,name,Qt.ToolTipRole)
         self.model_cancel=button('Отменить загрузку',self.cancel_operation); self.model_cancel.setEnabled(False)
-        layout.addWidget(row(self.model_download,button('Скачать модель',self.download_model,True),self.model_cancel))
+        self.model_download_button=button('Скачать модель',self.download_model,True)
+        self.model_download.currentIndexChanged.connect(self.update_model_actions)
+        layout.addWidget(self.model_download)
+        layout.addWidget(row(self.model_download_button,self.model_cancel,None))
         self.model_progress=QProgressBar(); self.model_progress.setRange(0,100); self.model_progress.setValue(0); layout.addWidget(self.model_progress)
-        layout.addWidget(label('Скорость ответа — пауза до начала речи; темп речи настраивается ниже. Быстрый режим сокращает распознавание и синтез, не ускоряя голос. Дополнительная проверка включается только для сложных вопросов. Маленькие модели быстрее, но могут чаще ошибаться.','subtitle'))
+        self.benchmark_button=button('Проверить выбранную модель',self.benchmark_model)
+        self.benchmark_cancel=button('Отменить проверку',self.cancel_operation);self.benchmark_cancel.setEnabled(False)
+        layout.addWidget(row(self.benchmark_button,self.benchmark_cancel,None))
+        benchmark_help=label('4 задания × 2 попытки: точность по правилу и время до первого предложения. Без голоса и реальных разговоров; узкий тест, не общий рейтинг. Для запуска остановите бота.','subtitle')
+        benchmark_help.setToolTip('Обдумывание выключено для одинаковых условий. Отдельного прогрева нет; первая попытка может включать загрузку модели. Отмена после текущего сетевого чтения — максимум через 20 секунд. Сравнивайте результаты при одинаковых ресурсах и нагрузке.')
+        layout.addWidget(benchmark_help)
+        self.benchmark_result=QPlainTextEdit();self.benchmark_result.setReadOnly(True);self.benchmark_result.setMaximumHeight(180)
+        self.benchmark_result.setPlaceholderText('Здесь появятся измерения на вашем компьютере.');layout.addWidget(self.benchmark_result)
         body.addWidget(block)
         block,layout=card('Голос')
         form=QFormLayout(); form.setSpacing(15)
@@ -105,18 +127,17 @@ class Views:
         self.length=QSpinBox(); self.length.setRange(80,2000); self.length.setSingleStep(80); form.addRow('Максимум символов ответа',self.length)
         self.history=QSpinBox(); self.history.setRange(1,30); form.addRow('Хранить пар реплик в контексте',self.history)
         self.reasoning=QCheckBox('Дополнительное обдумывание · может увеличить задержку'); form.addRow(self.reasoning)
-        self.response_choice.currentIndexChanged.connect(self.response_profile_changed)
         self.dota=QCheckBox('Разрешить чтение официальных патчноутов Valve'); form.addRow(self.dota)
         layout.addLayout(form); layout.addWidget(label('Простые вопросы остаются краткими. Большое объяснение можно попросить словами «подробно» или «по шагам». Команда «заткнись» останавливает речь; новое обращение по имени снова разрешает ответ.','subtitle'))
         body.addWidget(block)
-        body.addWidget(row(button('Сохранить настройки',self.save_settings,True),button('Сохранить и перезапустить',lambda:self.save_settings(True)),None)); body.addStretch(); return page_widget
+        body.addStretch(); return page_widget
 
     def persona_view(self):
-        page_widget,body=page('Персона и разговор','Характер бота и текущая история — отдельные настройки. Постоянная память находится в следующем разделе.')
+        page_widget,body=page('Персона и разговор','Характер бота и текущая история — отдельные настройки. Постоянная память находится в следующем разделе.',row(button('Сохранить персону',self.save_persona,True),None))
         block,layout=card('Как Собеседник общается')
         layout.addWidget(label('Опишите характер, манеру речи и предпочтения. При сохранении создаётся резервная копия. Новая персона используется в следующих вопросах.','subtitle'))
         self.persona_edit=QPlainTextEdit(); self.persona_edit.setMinimumHeight(200); layout.addWidget(self.persona_edit)
-        layout.addWidget(row(button('Сохранить персону',self.save_persona,True),None)); body.addWidget(block)
+        body.addWidget(block)
         block,layout=card('Контекст текущего разговора')
         layout.addWidget(label('Загрузите историю выбранного сервера. Можно исправить реплики или сбросить разговор. Каждая новая реплика начинается с «Человек:» или «Собеседник:». Это не изменяет постоянную память.','subtitle'))
         self.context_edit=QPlainTextEdit(); self.context_edit.setMinimumHeight(170); self.context_edit.setPlaceholderText('Человек: О чём мы говорили?\nСобеседник: О локальных моделях.'); layout.addWidget(self.context_edit)
@@ -125,7 +146,17 @@ class Views:
         body.addStretch(); return page_widget
 
     def memory_view(self):
-        page_widget,body=page('Память','Посмотрите, какие сведения сохранены, кто их сообщил и к кому они относятся.')
+        self.memory_save_button=button('Сохранить параметры памяти и обучения',self.save_memory_settings,True)
+        page_widget,body=page('Память','Посмотрите, какие сведения сохранены, кто их сообщил и к кому они относятся.',row(self.memory_save_button,None))
+        block,layout=card('Что слушать и сохранять')
+        self.listen_conversation=QCheckBox('Учитывать разговор людей в голосовом канале')
+        self.memory_auto_enabled=QCheckBox('Автоматически выделять и сохранять важные факты')
+        self.learning_capture_enabled=QCheckBox('Собирать отфильтрованные примеры диалога и исправления')
+        self.learning_auto_enabled=QCheckBox('Автоматически обучать веса LoRA во время простоя')
+        for control in (self.listen_conversation,self.memory_auto_enabled,self.learning_capture_enabled,self.learning_auto_enabled):layout.addWidget(control)
+        self.learning_capture_enabled.toggled.connect(self.learning_capture_changed)
+        layout.addWidget(label('Анализ разговора помогает сохранять контекст и факты; бот отвечает по режиму из «Голос и ответы». Факты сохраняются в постоянной памяти. Примеры могут подбираться к новым ответам — это адаптация по примерам, без изменения весов. Изменение весов требует отдельного тренера, достаточных данных и проверки кандидата; включённая галочка ещё не означает, что модель обучена. После изменения параметров перезапустите бота.','subtitle'))
+        body.addWidget(block)
         block,layout=card('Добавить постоянную заметку')
         self.memory_input=QLineEdit(); self.memory_input.setMaxLength(400); self.memory_input.setPlaceholderText('Например: по пятницам мы играем в шахматы')
         layout.addWidget(self.memory_input); layout.addWidget(row(button('Сохранить в память',self.add_memory,True),None))

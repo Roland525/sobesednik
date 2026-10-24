@@ -91,6 +91,31 @@ class LearningCorpus:
         return [{'source': kind, 'messages': [{'role': 'user', 'content': prompt},
                                              {'role': 'assistant', 'content': target}]} for kind, prompt, target in rows]
 
+    def context(self,guild,text):
+        from .memory import search_terms
+        from .training_data import informative_dialogue
+        terms=search_terms(text); rows=self.db.execute(
+            'SELECT kind,prompt,target FROM examples WHERE guild=? ORDER BY rowid DESC LIMIT 200',(guild,)).fetchall()
+        examples=[]; lengths=[]; selected={}; ranks={'human_dialogue':0,'confirmed':1,'correction':2}
+        for kind,prompt,target in rows:
+            if kind=='human_dialogue' and not informative_dialogue(prompt,target): continue
+            if not self.clean(prompt) or not self.clean(target): continue
+            key=re.sub(r'\W+','',prompt.casefold().replace('ё','е'))
+            if key not in selected or ranks.get(kind,0)>ranks.get(selected[key][0],0): selected[key]=(kind,prompt,target)
+        for kind,prompt,target in selected.values():
+            lengths.append(len(target.split()))
+            score=len(terms & search_terms(prompt))
+            if score>=2: examples.append((score,{'source':kind,'question':prompt[:250],'response':target[:450]}))
+        examples.sort(key=lambda item:item[0],reverse=True)
+        if not examples and not lengths: return ''
+        data={'examples':[row for _,row in examples[:2]]}
+        if lengths:
+            import statistics
+            data['observed_reply_words']=min(70,int(statistics.median(lengths)))
+        while data['examples'] and len(json.dumps(data,ensure_ascii=False))>1200:
+            data['examples'].pop()
+        return json.dumps(data,ensure_ascii=False)
+
     def export(self, guild, destination):
         examples = self.examples(guild)
         destination.parent.mkdir(parents=True, exist_ok=True)

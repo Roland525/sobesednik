@@ -430,7 +430,8 @@ class DiscordBot(commands.Bot):
             or self.learning_request or len(self.guilds) != 1
             or self.voice_transitions or any(lock.locked() for lock in self.guild_locks.values())):
             return
-        from .learning_cycle import MaintenancePolicy
+        from .learning_cycle import MaintenancePolicy, compatible_training_model
+        if not compatible_training_model(self.config.ollama_model): return
         from tools.run_learning_cycle import STATE, prerequisites, disk_ready, snapshot
         import json
         now = time.time()

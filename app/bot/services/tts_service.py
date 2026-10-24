@@ -17,7 +17,7 @@ class TTSService:
         if self.config.tts_engine == 'supertonic':
             from .supertonic_voice import SupertonicVoice
             self.voice = SupertonicVoice.load(self.config.path(self.config.tts_supertonic_model),
-                                               self.config.tts_supertonic_voice)
+                                               self.config.tts_supertonic_voice,threads=self.config.tts_cpu_threads)
             self.synthesize('Готов.')
             self.logger.info('TTS Supertonic %s: CPU, speed %.2f, steps %d',
                              self.config.tts_supertonic_voice, self.config.tts_speed,
@@ -30,7 +30,7 @@ class TTSService:
         if not model.exists():
             raise RuntimeError('Нет локального голоса Piper. Выполните setup.bat.')
         settings = ort.SessionOptions()
-        settings.intra_op_num_threads = 4
+        settings.intra_op_num_threads = self.config.tts_cpu_threads
         settings.inter_op_num_threads = 1
         self.voice = PiperVoice(
             session=ort.InferenceSession(str(model), sess_options=settings, providers=['CPUExecutionProvider']),

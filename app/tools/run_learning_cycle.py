@@ -17,7 +17,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bot.config import ROOT, Config
-from bot.learning_cycle import quality_gate
+from bot.learning_cycle import quality_gate, compatible_training_model
 from bot.training_data import informative_dialogue
 from bot.runtime import InstanceLock
 from tools.process_tree import run_owned
@@ -96,6 +96,11 @@ def bounded_remove(path, run):
 
 
 def cycle(guild):
+    config = Config.load()
+    if not compatible_training_model(config.ollama_model):
+        result={'status':'skipped','reason':'incompatible_selected_model','last_attempt':time.time(),'last_count':0}
+        atomic_json(STATE,result)
+        return result
     count, rows = snapshot(guild)
     if len(rows) < 16 or not prerequisites() or not disk_ready():
         result = {'status': 'skipped', 'reason': 'data_dependencies_or_disk',

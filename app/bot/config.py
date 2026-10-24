@@ -7,6 +7,17 @@ import ipaddress
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def resource_settings(level):
+    """A real CPU thread/offload budget, not a promised GPU utilization rate."""
+    if type(level) is not int or not 0<=level<=100: raise ValueError('Ресурсы: от 0 до 100')
+    cores=min(32,os.cpu_count() or 4)
+    threads=max(1,round(cores*level/100))
+    return {'ollama_num_gpu':0 if level==0 else -1 if level>=70 else max(1,round(level/2)),
+            'ollama_num_thread':threads,'whisper_cpu_threads':min(16,threads),
+            # Supertonic CPU inference regresses with excessive parallelism;
+            # a resource budget is a ceiling, not a mandate to waste threads.
+            'tts_cpu_threads':min(4,threads)}
+
 RESPONSE_PROFILES = {
     'fast': {'ollama_reasoning': True, 'ollama_reasoning_budget': 256, 'ollama_num_gpu': -1, 'ollama_num_ctx': 4096,
              'whisper_beam_size': 1, 'speech_end_delay': .30, 'tts_supertonic_steps': 6},
@@ -26,6 +37,8 @@ class Config:
     ollama_model: str = 'huihui_ai/qwen3-abliterated:8b'
     ollama_num_ctx: int = 4096
     ollama_num_gpu: int = -1
+    ollama_num_thread: int = 4
+    resource_level: int = 70
     ollama_num_predict: int = 260
     ollama_temperature: float = 0.4
     ollama_top_p: float = 0.9
@@ -36,7 +49,9 @@ class Config:
     response_profile: str = 'custom'
     dota_patch_source_enabled: bool = False
     memory_enabled: bool = True
-    learning_capture_enabled: bool = False
+    memory_auto_enabled: bool = True
+    listen_conversation: bool = True
+    learning_capture_enabled: bool = True
     learning_auto_enabled: bool = False
     max_response_chars: int = 1000
     history_turns: int = 8
@@ -57,6 +72,7 @@ class Config:
     tts_supertonic_model: str = 'models/supertonic-3'
     tts_supertonic_voice: str = 'M3'
     tts_supertonic_steps: int = 8
+    tts_cpu_threads: int = 4
     tts_speed: float = 1.0
     tts_noise_scale: float = 0.45
     tts_noise_w_scale: float = 0.6
@@ -112,6 +128,7 @@ class Config:
             'history_turns': (1, 30), 'history_chars': (500, 12000),
             'ollama_num_ctx': (512, 8192), 'ollama_num_predict': (16, 512),
             'ollama_num_gpu': (-1, 128), 'whisper_timeout': (2, 60),
+            'ollama_num_thread': (1,32),'resource_level':(0,100),'tts_cpu_threads':(1,16),
             'ollama_timeout': (5, 180), 'whisper_cpu_threads': (1, 16),
             'ollama_reasoning_budget': (128, 1024),
             'whisper_beam_size': (1, 5), 'max_response_chars': (40, 2000),
@@ -129,7 +146,8 @@ class Config:
                 raise ValueError(f'Некорректная настройка {name}: допустимо {low}..{high}')
         for name in ('vad_mode', 'max_audio_queue_size', 'history_turns', 'ollama_num_ctx',
                      'ollama_num_predict', 'whisper_cpu_threads', 'whisper_beam_size',
-                     'max_response_chars', 'max_speakers', 'history_chars', 'ollama_reasoning_budget', 'ollama_num_gpu', 'tts_supertonic_steps'):
+                     'max_response_chars', 'max_speakers', 'history_chars', 'ollama_reasoning_budget', 'ollama_num_gpu', 'tts_supertonic_steps',
+                     'ollama_num_thread','resource_level','tts_cpu_threads'):
             if type(getattr(self, name)) is not int:
                 raise ValueError(f'{name} должен быть целым числом')
         if self.whisper_device not in ('auto', 'cpu', 'cuda'):
@@ -140,7 +158,7 @@ class Config:
             raise ValueError('tts_supertonic_voice: M1..M5')
         if not self.ollama_model or self.ollama_model.endswith('-cloud') or ':cloud' in self.ollama_model:
             raise ValueError('Разрешены только локально установленные модели Ollama')
-        for name in ('listen_only_joiner', 'sync_guild_commands', 'enable_prefix_commands', 'initiative_enabled', 'ollama_reasoning', 'dota_patch_source_enabled', 'memory_enabled', 'learning_capture_enabled', 'learning_auto_enabled'):
+        for name in ('listen_only_joiner', 'sync_guild_commands', 'enable_prefix_commands', 'initiative_enabled', 'ollama_reasoning', 'dota_patch_source_enabled', 'memory_enabled', 'memory_auto_enabled','listen_conversation','learning_capture_enabled', 'learning_auto_enabled'):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f'{name} должен быть true или false')
         if self.conversation_mode not in ('participant', 'summon', 'strict', 'rare'):

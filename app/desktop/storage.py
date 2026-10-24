@@ -15,7 +15,8 @@ EDITABLE = {'wake_word', 'bot_name', 'tts_speed', 'tts_volume', 'tts_supertonic_
             'history_chars', 'history_ttl', 'ollama_reasoning', 'ollama_reasoning_budget',
             'memory_enabled', 'learning_capture_enabled', 'learning_auto_enabled',
             'auto_join_channel_id', 'dota_patch_source_enabled', 'whisper_model', 'ollama_num_gpu',
-            'ollama_model', 'response_profile'}
+            'ollama_model', 'response_profile','resource_level','ollama_num_thread','tts_cpu_threads',
+            'memory_auto_enabled','listen_conversation'}
 
 
 def read_shared(path, encoding='utf-8'):
@@ -125,6 +126,9 @@ class Profile:
         if 'response_profile' in patch:
             from bot.config import RESPONSE_PROFILES
             raw.update(RESPONSE_PROFILES.get(patch['response_profile'], {}))
+        if 'resource_level' in patch:
+            from bot.config import resource_settings
+            raw.update(resource_settings(patch['resource_level']))
         known=Config.__dataclass_fields__
         validated=Config(**{k:v for k,v in raw.items() if k in known})
         validated.validate()

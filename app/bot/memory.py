@@ -136,6 +136,19 @@ def operational_instruction(text):
         r'<\|(?:im_start|system|assistant)|\[(?:system|inst)\]', value, re.S))
 
 
+def observation_text(text):
+    """Select durable declarative speech; raw evidence remains attributed."""
+    text=re.sub(r'^(?:(?:кстати|слушай|смотри|ну|короче|вообще)[, ]+)+','',str(text).strip(),flags=re.I)
+    if (not 2<=len(text.split())<=60 or len(text)>400 or '?' in text
+        or operational_instruction(text) or re.search(
+            r'парол|токен|\bip\b|айпи|секретн\w* ключ|\b(?:сейчас|сегодня|вчера|завтра|наверное|кажется|возможно|если)\b|'
+            r'^(?:я думаю|я считаю|мне кажется|может быть)|\bя люблю (?:тебя|вас|всех)\b|'
+            r'\b(?:неправда|пошутил|шутка|цитирую|хуесос|идиот|дурак)\b|'
+            r'\b(?:он|она|они|ты|вы) (?:сказал\w*|говорил\w*|говорит\w*)\b',text,re.I)):
+        return ''
+    return text.strip(' .!')
+
+
 @dataclass
 class MemoryResult:
     reply: str = ''
@@ -276,6 +289,37 @@ class MemoryStore:
         if fact and self.save(guild, uid, fact[0], fact[1], target=uid):
             return 'Запомнил: ' + fact[1] + '.'
         return ''
+
+    def observe_auto(self,guild,uid,nick,text,username=''):
+        self.register(guild,uid,nick,username)
+        body=observation_text(self.clean(text,700))
+        if not body: return ''
+        learned=self.observe(guild,uid,nick,body,username)
+        if learned: return learned
+        slot=''
+        if re.match(r'^я (?:работаю|учусь|по профессии)\b',body,re.I): slot='auto:occupation'
+        elif re.match(r'^(?:я (?:очень )?(?:не )?(?:люблю|предпочитаю|увлекаюсь|пользуюсь)|мне (?:очень )?нравится)\b',body,re.I):
+            slot='auto:preference:'+hashlib.sha256(normalized(body).encode()).hexdigest()[:20]
+        elif re.match(r'^у меня (?:есть )?(?:кот|кошка|собака|п[её]с|питомец|машина|компьютер|ноутбук)\b',body,re.I):
+            slot='auto:profile:'+hashlib.sha256(normalized(body).encode()).hexdigest()[:20]
+        elif re.match(r'^(?:по (?:понедельникам|вторникам|средам|четвергам|пятницам|субботам|воскресеньям|выходным)|я обычно)\b',body,re.I):
+            slot='auto:routine:'+hashlib.sha256(normalized(body).encode()).hexdigest()[:20]
+        if slot and self.save(guild,uid,slot,body,target=uid): return 'Запомнил: '+body+'.'
+        return ''
+
+    def save_observation(self,guild,uid,nick,original,quote,category):
+        if category not in ('identity','preference','routine','profile','agreement'): return False
+        evidence=observation_text(original)
+        if not isinstance(quote,str) or not evidence or normalized(quote)!=normalized(evidence): return False
+        body=observation_text(quote)
+        if not body or self.clean(body)!=body: return False
+        if self.observe_auto(guild,uid,nick,body): return True
+        self.register(guild,uid,nick)
+        slot='auto:quote:'+hashlib.sha256(normalized(body).encode()).hexdigest()[:20]
+        mentioned=self.mentioned(guild,body)
+        first_person=bool(re.match(r'^(?:я|мне|меня|мой|моя|мо[её]|мои|у меня)\b',body,re.I))
+        target=next(iter(mentioned)) if len(mentioned)==1 and not first_person else uid
+        return self.save(guild,uid,slot,body,target=target)
 
     def _unclear_person(self, matches):
         if matches:

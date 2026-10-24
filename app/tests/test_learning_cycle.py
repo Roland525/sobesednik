@@ -18,6 +18,12 @@ def report():
 
 
 class LearningCycleTests(unittest.TestCase):
+    def test_prepared_lora_base_cannot_replace_other_selected_model_families(self):
+        from bot.learning_cycle import compatible_training_model
+        self.assertTrue(compatible_training_model('huihui_ai/qwen3-abliterated:8b'))
+        self.assertTrue(compatible_training_model('sobesednik-learned-20261024-123456:latest'))
+        for model in ['huihui_ai/qwen3-abliterated:4b','huihui_ai/qwen3.5-abliterated:9B','sobesednik-learned-untrusted:latest']:
+            self.assertFalse(compatible_training_model(model))
     def test_automatic_training_requires_capture_and_is_opt_in(self):
         self.assertFalse(Config().learning_auto_enabled)
         with self.assertRaises(ValueError):

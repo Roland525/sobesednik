@@ -2,6 +2,13 @@
 from dataclasses import dataclass
 import math
 import statistics
+import re
+
+
+def compatible_training_model(model):
+    """The prepared LoRA base is Qwen3 8B, never silently replace a chosen family."""
+    return (model.casefold()=='huihui_ai/qwen3-abliterated:8b'
+            or bool(re.fullmatch(r'sobesednik-learned-\d{8}-\d{6}:latest',model.casefold())))
 
 
 @dataclass
