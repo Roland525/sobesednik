@@ -25,44 +25,44 @@
 ### Task 1: Recent turn diagnostics
 Files: bot/diagnostics.py, bot/session.py, bot/desktop_control.py, desktop/views.py, desktop/app.py, tests/test_turn_diagnostics.py, tests_desktop/test_window.py.
 Interface: TurnJournal.heard(...)->id, update(id,**fields), snapshot()->list; state sessions[gid].turns.
-- [ ] RED: tests for bounds/redaction/evidence and actual response routing.
-- [ ] Implement journal and desktop selected-turn details; only evidence present in final prompt.
-- [ ] GREEN: backend diagnostics + Qt tests; commit.
+- [x] RED: tests for bounds/redaction/evidence and actual response routing.
+- [x] Implement journal and desktop selected-turn details; only evidence present in final prompt.
+- [x] GREEN: backend diagnostics + Qt tests; commit.
 
 ### Task 2: Local hardware tuning
 Files: desktop/tuning.py, desktop/views.py, desktop/app.py, tests/test_tuning.py.
 Interface: run_tuning(root,candidates,cancel,progress)->report, choose_recommendation(rows)->row|None.
-- [ ] RED: recommendation gates quality before latency, canceled/failed runs excluded, config unchanged.
-- [ ] Implement isolated resident-STT text-to-first-PCM worker and cancellable comparison; explicit apply button.
-- [ ] GREEN: tests and one real local candidate measurement; commit.
+- [x] RED: recommendation gates quality before latency, canceled/failed runs excluded, config unchanged.
+- [x] Implement isolated resident-STT text-to-first-PCM worker and cancellable comparison; explicit apply button.
+- [x] GREEN: tests and one real local candidate measurement; commit.
 
 ### Task 3: Memory revisions and recall
 Files: bot/memory.py, desktop/storage.py, bot/desktop_control.py, desktop/views.py, desktop/app.py, tests/test_memory_revisions.py.
 Interface: note_history migration, history(guild,record_id), recall_check(guild,uid,question)->data.
-- [ ] RED: changed occupation has current/previous values with authors/dates; deletion purges history.
-- [ ] Implement revision migration/write and UI inspect/check action, no generated proof claims.
-- [ ] GREEN: legacy and new memory tests; commit.
+- [x] RED: changed occupation has current/previous values with authors/dates; deletion purges history.
+- [x] Implement revision migration/write and UI inspect/check action, no generated proof claims.
+- [x] GREEN: legacy and new memory tests; commit.
 
 ### Task 4: Corrective feedback and regressions
 Files: bot/feedback.py, bot/session.py, bot/desktop_control.py, desktop/protocol.py, desktop/app.py, desktop/views.py, tools/run_learning_cycle.py, tests/test_feedback.py.
 Interface: FeedbackStore.add(guild,turn,question,answer), cases(guild); feedback_add IPC validates live turn ID.
-- [ ] RED: immutable source attribution, empty/stale/cross-server cases rejected, private facts excluded from weight evaluation.
-- [ ] Implement correction dialog/actions, local persisted cases and bounded runtime regression command; candidate acceptance checks those cases.
-- [ ] GREEN: feedback/candidate and UI tests; commit.
+- [x] RED: immutable source attribution, empty/stale/cross-server cases rejected, private facts excluded from weight evaluation.
+- [x] Implement correction dialog/actions, local persisted cases and bounded runtime regression command; candidate acceptance checks those cases.
+- [x] GREEN: feedback/candidate and UI tests; commit.
 
 ### Task 5: Conversation turn-taking
 Files: bot/conversation.py, bot/session.py, bot/config.py, desktop/views.py, desktop/app.py, tests/test_turn_taking.py.
-- [ ] RED: only owner continues related topic, another addressee rejected; fragmented speech buffered with bounded wait; hush cancels pending output.
-- [ ] Implement explicit followup setting and pending speaker completion gate without changing rare participation frequency.
-- [ ] GREEN: routing/control/recovery tests; commit.
+- [x] RED: only owner continues related topic, another addressee rejected; fragmented speech buffered with bounded wait; hush cancels pending output.
+- [x] Implement explicit followup setting and pending speaker completion gate without changing rare participation frequency.
+- [x] GREEN: routing/control/recovery tests; commit.
 
 ### Task 6: Reliable voice errand progress
 Files: bot/voice_routes.py, bot/desktop_control.py, desktop/views.py, desktop/app.py, tests/test_voice_routes.py.
 Interface: VoiceRoutes.status(guild)->dict bounded stage history, owner and outcome.
-- [ ] RED: move failure, incomplete playback, cancellation, return failure never mark success.
-- [ ] Implement stage transitions and desktop progress display, preserve disambiguation.
-- [ ] GREEN: errands + full backend/Qt suite; commit.
+- [x] RED: move failure, incomplete playback, cancellation, return failure never mark success.
+- [x] Implement stage transitions and desktop progress display, preserve disambiguation.
+- [x] GREEN: errands + full backend/Qt suite; commit.
 
 ### Release
-- [ ] Review full diff, privacy allowlist/manifest, runtime and visual QA.
-- [ ] Build next version, publish source + EXE + SHA, install and validate when desktop control available.
+- [x] Review full diff, privacy allowlist/manifest, runtime and visual QA.
+- [x] Build next version, publish source + EXE + SHA, install and validate when desktop control available.
