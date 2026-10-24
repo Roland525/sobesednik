@@ -228,6 +228,22 @@ class Profile:
                             db.execute('DELETE FROM '+table+' WHERE guild=?',(guild,))
             finally: db.close()
 
+    def memory_history(self,guild,record_id):
+        from bot.memory import MemoryStore
+        path=self.root/'data/memory.sqlite3'
+        if not path.exists():return []
+        store=MemoryStore(path)
+        try:return store.history(int(guild),int(record_id))
+        finally:store.close()
+
+    def memory_check(self,guild,uid,question):
+        from bot.memory import MemoryStore
+        path=self.root/'data/memory.sqlite3'
+        if not path.exists():raise ValueError('Постоянная память ещё не создана.')
+        store=MemoryStore(path)
+        try:return store.recall_check(int(guild),int(uid),question)
+        finally:store.close()
+
     def logs(self, token=''):
         path=self.root/'logs/serega.log'
         if not path.exists(): return 'Журнал появится после первого запуска.'

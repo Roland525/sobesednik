@@ -179,6 +179,14 @@ class MemoryStore:
                 kind TEXT NOT NULL, content TEXT NOT NULL, updated REAL NOT NULL,
                 PRIMARY KEY(guild,source,slot));
             CREATE INDEX IF NOT EXISTS target_notes ON notes(guild,target);
+            CREATE TABLE IF NOT EXISTS note_history (
+                id INTEGER PRIMARY KEY, guild INTEGER NOT NULL, source INTEGER NOT NULL,
+                slot TEXT NOT NULL, target INTEGER NOT NULL, content TEXT NOT NULL,
+                updated REAL NOT NULL, replaced REAL NOT NULL);
+            CREATE INDEX IF NOT EXISTS history_note ON note_history(guild,source,slot);
+            CREATE TRIGGER IF NOT EXISTS purge_note_history AFTER DELETE ON notes BEGIN
+                DELETE FROM note_history WHERE guild=OLD.guild AND source=OLD.source AND slot=OLD.slot;
+            END;
         ''')
 
     def close(self):
@@ -248,13 +256,22 @@ class MemoryStore:
         return True
 
     def save(self, guild, source, slot, content, *, target=0, alias='', kind='fact'):
-        exists = self.db.execute('SELECT 1 FROM notes WHERE guild=? AND source=? AND slot=?',
+        exists = self.db.execute('SELECT * FROM notes WHERE guild=? AND source=? AND slot=?',
                                  (guild, source, slot)).fetchone()
+        content=self.clean(content)
+        if exists and all(exists[key]==value for key,value in
+                          [('content',content),('target',target),('alias',alias),('kind',kind)]):return True
         count = self.db.execute('SELECT COUNT(*) FROM notes WHERE guild=?', (guild,)).fetchone()[0]
         own_count = self.db.execute('SELECT COUNT(*) FROM notes WHERE guild=? AND source=?', (guild, source)).fetchone()[0]
         if not exists and (count >= 1000 or own_count >= 100):
             return False
         with self.db:
+            if exists and exists['content']!=content:
+                self.db.execute('INSERT INTO note_history(guild,source,slot,target,content,updated,replaced) VALUES(?,?,?,?,?,?,?)',
+                    (guild,source,slot,exists['target'],exists['content'],exists['updated'],time.time()))
+                self.db.execute('DELETE FROM note_history WHERE guild=? AND source=? AND slot=? AND id NOT IN '
+                    '(SELECT id FROM note_history WHERE guild=? AND source=? AND slot=? ORDER BY id DESC LIMIT 20)',
+                    (guild,source,slot,guild,source,slot))
             if slot in ('favorite_game', 'favorite_color', 'role', 'car', 'city', 'age'):
                 legacy = self.db.execute("SELECT slot,content FROM notes WHERE guild=? AND source=? AND target=? AND slot LIKE 'note:%'",
                                          (guild, source, target)).fetchall()
@@ -264,8 +281,27 @@ class MemoryStore:
             self.db.execute('''INSERT INTO notes VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(guild,source,slot)
                 DO UPDATE SET target=excluded.target,alias=excluded.alias,kind=excluded.kind,
                 content=excluded.content,updated=excluded.updated''',
-                (guild, source, slot, target, alias, kind, self.clean(content), time.time()))
+                (guild, source, slot, target, alias, kind, content, time.time()))
         return True
+
+    def history(self,guild,record_id):
+        current=self.db.execute('SELECT * FROM notes WHERE guild=? AND rowid=?',(guild,record_id)).fetchone()
+        if not current:return []
+        rows=[dict(row) for row in self.db.execute('SELECT source,target,content,updated,replaced FROM note_history '
+              'WHERE guild=? AND source=? AND slot=? ORDER BY id DESC LIMIT 20',(guild,current['source'],current['slot']))]
+        rows.reverse();rows.append({key:current[key] for key in ('source','target','content','updated')})
+        rows[-1]['replaced']=None
+        for row in rows:
+            author=self.profile(guild,row['source'])
+            row['source_nick']=author['nick'] if author else 'Владелец · панель' if row['source']==0 else 'Участник'
+        return rows
+
+    def recall_check(self,guild,uid,question):
+        if not isinstance(question,str) or not 1<=len(question.strip())<=400:raise ValueError('Введите вопрос: до 400 символов')
+        data=json.loads(self.context(guild,uid,question))
+        return {'question':self.clean(question),'speaker_id':uid,'evidence':data['notes'],'people':data['people'],
+                'retrieved':bool(data['notes'] or any(p['real_name'] for p in data['people'])),
+                'explanation':'Проверка поиска актуальных сведений; это не ответ, сгенерированный моделью.'}
 
     def observe(self, guild, uid, nick, text, username=''):
         """Only clear personal slots; never persist the complete transcript."""
@@ -292,6 +328,7 @@ class MemoryStore:
 
     def observe_auto(self,guild,uid,nick,text,username=''):
         self.register(guild,uid,nick,username)
+        text=re.sub(r'^теперь\s+(?=я\s)','',text,flags=re.I)
         body=observation_text(self.clean(text,700))
         if not body: return ''
         learned=self.observe(guild,uid,nick,body,username)

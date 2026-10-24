@@ -12,6 +12,36 @@ REASONS={'named':'Обращение по имени','followup':'Продолж
 
 
 class QualityControls:
+    def show_local_report(self,title,text):
+        from PySide6.QtWidgets import QDialog,QVBoxLayout
+        dialog=QDialog(self);dialog.setWindowTitle(title);dialog.resize(760,470)
+        layout=QVBoxLayout(dialog);edit=QPlainTextEdit();edit.setReadOnly(True);edit.setPlainText(text)
+        layout.addWidget(edit);layout.addWidget(button('Закрыть',dialog.accept));dialog.exec()
+
+    def selected_memory(self):
+        index=self.memory_table.currentRow()
+        return self.memory_data[index] if 0<=index<len(self.memory_data) else None
+
+    def inspect_memory_history(self):
+        record=self.selected_memory()
+        if not record or self.memory_kind.currentData()!='notes':self.notice('Выберите запись в списке «Сведения».');return
+        def show(rows):
+            text='\n\n'.join(('Текущее' if r['replaced'] is None else 'Предыдущее')+' · '+
+                time.strftime('%d.%m.%Y %H:%M',time.localtime(r['updated']))+' · '+r['source_nick']+'\n'+r['content'] for r in rows)
+            self.show_local_report('История изменения сведений',text or 'Запись уже удалена.')
+        self.run_job(lambda _:self.profile.memory_history(record['guild'],record['record_id']),show,operation=False)
+
+    def check_memory_recall(self):
+        from PySide6.QtWidgets import QInputDialog
+        record=self.selected_memory()
+        if not record or self.memory_kind.currentData() not in ('notes','people'):
+            self.notice('Выберите сведения или участника, затем введите вопрос для проверки.');return
+        uid=record.get('uid') or record.get('target') or record.get('source') or 0
+        question,ok=QInputDialog.getText(self,'Проверить поиск в памяти','Вопрос от лица выбранного участника:')
+        if not ok:return
+        self.run_job(lambda _:self.profile.memory_check(record['guild'],uid,question),
+            lambda report:self.show_local_report('Найденные воспоминания',json.dumps(report,ensure_ascii=False,indent=2)),operation=False)
+
     def build_tuning(self,body):
         block,layout=card('Подобрать настройки под компьютер')
         layout.addWidget(label('Сравнение установленных моделей при бюджете 70 и 100. Синтетические вопросы проходят через речь, распознавание и озвучку, с Whisper в памяти. До 12 вариантов; может занять несколько минут. Бот должен быть остановлен. Настройки автоматически не меняются.','subtitle'))

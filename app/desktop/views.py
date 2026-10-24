@@ -174,6 +174,7 @@ class Views:
         self.memory_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.Stretch)
         self.memory_table.verticalHeader().hide(); self.memory_table.setMinimumHeight(300); layout.addWidget(self.memory_table)
         self.memory_count=label('Сохранённых записей пока нет','subtitle'); layout.addWidget(self.memory_count)
+        layout.addWidget(row(button('История изменений',self.inspect_memory_history),button('Проверить поиск в памяти',self.check_memory_recall),None))
         layout.addWidget(row(button('Удалить выбранную запись',self.delete_memory,danger=True),button('Забыть участника',self.forget_person,danger=True),None))
         layout.addWidget(row(button('Очистить память сервера',self.clear_memory,danger=True),button('Очистить учебные примеры',self.clear_learning,danger=True),None))
         body.addWidget(block)
