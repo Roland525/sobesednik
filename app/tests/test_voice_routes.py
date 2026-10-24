@@ -107,6 +107,43 @@ class RouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len([s for _, s in self.spoken if 'Мы готовы' in s]), 1)
         self.assertFalse(self.routes.active)
 
+    async def test_progress_only_marks_delivery_and_return_after_they_complete(self):
+        await self.execute(self.prepare('Перейди в Общий, скажи: Мы готовы, и вернись'))
+        status=self.routes.status(1)
+        self.assertEqual(status['outcome'],'completed')
+        self.assertTrue(status['delivered']);self.assertTrue(status['returned'])
+        stages=[event['stage'] for event in status['events']]
+        self.assertLess(stages.index('joined'),stages.index('delivered'))
+        self.assertLess(stages.index('delivered'),stages.index('returned'))
+
+    async def test_unconfirmed_move_and_failed_return_never_report_success(self):
+        original=self.bot.join_channel
+        async def noop(channel):pass
+        self.bot.join_channel=noop
+        await self.execute(self.prepare('Перейди в Общий, скажи: Мы готовы, и вернись'))
+        self.assertEqual(self.routes.status(1)['outcome'],'failed')
+        self.assertFalse(self.routes.status(1)['delivered'])
+        self.assertFalse(any('Сообщение передал' in text for _,text in self.spoken))
+        async def fail_return(channel):
+            if channel.id==11:raise RuntimeError('return failed')
+            await original(channel)
+        self.bot.join_channel=fail_return
+        await self.execute(self.prepare('Перейди в Общий, скажи: Мы готовы, и вернись'))
+        self.assertEqual(self.routes.status(1)['outcome'],'failed')
+        self.assertTrue(self.routes.status(1)['delivered']);self.assertFalse(self.routes.status(1)['returned'])
+
+    async def test_cancelled_playback_can_return_but_cannot_claim_delivery(self):
+        entered=asyncio.Event()
+        async def say(guild,text):entered.set();await asyncio.sleep(20)
+        self.routes.say=say
+        decision=self.prepare('Перейди в Общий, скажи: Мы готовы, и вернись')
+        self.routes.start(decision.job);task=self.routes.active[1][0]
+        await entered.wait();self.routes.cancel(1,restore=True)
+        await asyncio.gather(task,return_exceptions=True)
+        self.assertEqual(self.routes.status(1)['outcome'],'cancelled')
+        self.assertFalse(self.routes.status(1)['delivered'])
+        self.assertEqual(self.guild.voice_client.channel.id,11)
+
     async def test_one_way_move_and_relay_without_return(self):
         await self.execute(self.prepare('Перейди в канал Общий'))
         self.assertEqual(self.joined, [22])

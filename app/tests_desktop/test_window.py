@@ -43,6 +43,15 @@ class WindowTests(unittest.TestCase):
         self.assertIn('Обращение по имени',self.window.turn_detail.toPlainText())
         self.assertIn('Synthetic fact — Tester',self.window.turn_detail.toPlainText())
 
+    def test_errand_panel_distinguishes_failed_delivery_from_completed_return(self):
+        self.window.guild_box.clear();self.window.guild_box.addItem('Test','1')
+        self.window.state={'guilds':[{'id':'1','errand':{'origin':'Origin','target':'Target','stage':'failed',
+            'delivered':False,'returned':True,'events':[{'stage':'returned','at':1}]}}]}
+        self.window.refresh_errand()
+        self.assertIn('Не выполнено полностью',self.window.errand_status.text())
+        self.assertIn('не подтверждено',self.window.errand_status.text())
+        self.assertIn('Вернулся',self.window.errand_steps.toPlainText())
+
     def test_settings_and_persona_save_to_selected_profile(self):
         self.window.speed.setValue(1.12)
         self.window.save_settings()

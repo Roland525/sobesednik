@@ -69,7 +69,7 @@ class Views:
         self.channel_status=label('Запустите бота на вкладке «Обзор».','subtitle'); layout.addWidget(self.channel_status)
         self.remember_channel=QCheckBox('Подключаться к выбранному каналу при запуске'); self.remember_channel.setChecked(True); layout.addWidget(self.remember_channel)
         layout.addWidget(label('Server Members, Presence и Message Content intents для обычных slash-команд не требуются. Полные права администратора боту не нужны.','subtitle'))
-        body.addWidget(block); body.addStretch(); return page_widget
+        body.addWidget(block);self.build_errand(body); body.addStretch(); return page_widget
 
     def settings_view(self):
         self.settings_save_button=button('Сохранить',self.save_settings,True)

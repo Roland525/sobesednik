@@ -86,7 +86,8 @@ class DesktopControl:
                                      'members':len(channel.members)})
             vc=guild.voice_client
             guilds.append({'id':str(guild.id),'name':guild.name,'channels':channels,
-                           'connected_channel':str(vc.channel.id) if vc and vc.is_connected() else ''})
+                           'connected_channel':str(vc.channel.id) if vc and vc.is_connected() else '',
+                           'errand':self.bot.voice_routes.status(guild.id)})
         for gid,session in self.bot.sessions.items():
             sessions[str(gid)]={'context':[{'role':m['role'],'content':redact(m['content'],token)}
                 for m in list(session.conversation.history)[-60:]],

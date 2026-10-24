@@ -302,6 +302,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
 
     def refresh(self):
         self.state=self.protocol.status(); running=self.runtime.running()
+        self.refresh_errand()
         if self.pages.currentIndex()==5:self.refresh_diagnostics()
         self.status_label.setText('В Discord' if self.state.get('ready') else 'Подключается…' if running else 'Остановлен')
         self.start_button.setEnabled(not running and not self.busy and self.runtime.installed())

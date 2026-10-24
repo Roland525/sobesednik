@@ -1,6 +1,8 @@
 """Explicit, local voice errands. LLM output never dispatches these actions."""
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace,field
+import copy
+import uuid
 from difflib import SequenceMatcher
 import re
 import time
@@ -77,6 +79,8 @@ class Job:
     message: str
     return_back: bool
     restore_allowed: bool = True
+    requester: int = 0
+    job_id: str = field(default_factory=lambda:uuid.uuid4().hex)
 
 
 @dataclass
@@ -90,6 +94,21 @@ class VoiceRoutes:
         self.bot = bot
         self.pending = {}
         self.active = {}
+        self.latest={}
+
+    def status(self,guild_id):return copy.deepcopy(self.latest.get(guild_id,{}))
+
+    def stage(self,job,stage,**fields):
+        state=self.latest.get(job.guild.id)
+        if not state or state['id']!=job.job_id:
+            if len(self.latest)>=64:self.latest.pop(next(iter(self.latest)))
+            state={'id':job.job_id,'speaker':job.speaker,'requester':job.requester,
+                   'origin':safe_output(job.origin.name,[self.bot.config.discord_token]),
+                   'target':safe_output(job.target.name,[self.bot.config.discord_token]),
+                   'delivered':False,'returned':False,'outcome':'pending','events':[]}
+            self.latest[job.guild.id]=state
+        state.update(fields);state['stage']=stage;state['updated']=time.time()
+        state['events']=(state['events']+[{'stage':stage,'at':state['updated']}])[-12:]
 
     def can_continue(self, session, uid, text):
         pending = self.pending.get((session.guild_id, uid))
@@ -172,7 +191,8 @@ class VoiceRoutes:
         if target.id == origin.id and not order.message:
             return Decision('Я уже в этом канале.')
         message = safe_output(order.message, [self.bot.config.discord_token])
-        job = Job(guild, origin, target, safe_output(question.name, [self.bot.config.discord_token]), message, order.return_back)
+        job = Job(guild, origin, target, safe_output(question.name, [self.bot.config.discord_token]), message, order.return_back,requester=question.user_id)
+        self.stage(job,'found')
         reply = 'Окей, перехожу в ' + target.name + '.'
         if order.return_back and not order.message:
             reply += ' Затем вернусь.'
@@ -209,40 +229,60 @@ class VoiceRoutes:
             raise asyncio.CancelledError
         future = asyncio.get_running_loop().create_future()
         session.enqueue(Question(0, 'Поручение', text, time.monotonic(), kind='say', future=future))
-        await asyncio.wait_for(future, 45)
+        result=await asyncio.wait_for(future, 45)
+        expected=safe_output(text,[self.bot.config.discord_token])
+        if result!=expected:raise RuntimeError('VoicePlaybackNotConfirmed')
 
     async def run(self, job):
-        failed = delivered = False
+        failed = delivered = cancelled = moved = returned = False
         try:
             if self.current_channel(job.guild) != job.origin:
-                return
+                raise RuntimeError('OriginChannelChanged')
             async with asyncio.timeout(80):
+                self.stage(job,'moving',outcome='running')
                 await self.bot.join_channel(job.target)
                 if self.current_channel(job.guild) != job.target:
-                    return
+                    raise RuntimeError('VoiceMoveNotConfirmed')
+                moved=True;self.stage(job,'joined')
                 if job.message:
+                    self.stage(job,'delivering')
                     await self.say(job.guild, 'Сообщение от ' + job.speaker + ': ' + job.message)
                     delivered = True
+                    self.stage(job,'delivered',delivered=True)
         except asyncio.CancelledError:
+            cancelled=True;self.stage(job,'cancelled',outcome='cancelled')
             raise
         except Exception as error:
             failed = True
+            self.stage(job,'failed',outcome='failed',error=type(error).__name__)
             self.bot.logger.warning('Поручение voice не выполнено guild=%s: %s', job.guild.id, type(error).__name__)
         finally:
             try:
                 current = self.current_channel(job.guild)
                 if (job.restore_allowed and not self.bot.shutting_down and (job.return_back or failed)
                     and current in (None, job.target) and job.origin != current):
+                    self.stage(job,'returning')
                     await self.bot.join_channel(job.origin)
-                if failed and job.restore_allowed and self.current_channel(job.guild) == job.origin:
+                    if self.current_channel(job.guild)!=job.origin:raise RuntimeError('VoiceReturnNotConfirmed')
+                    returned=True;self.stage(job,'returned',returned=True)
+                elif moved and job.return_back and current==job.origin:
+                    returned=True;self.stage(job,'returned',returned=True)
+                if cancelled:pass
+                elif failed and job.restore_allowed and self.current_channel(job.guild) == job.origin:
                     await self.say(job.guild, 'Не получилось выполнить поручение. Я вернулся.')
                 elif delivered and job.return_back and self.current_channel(job.guild) == job.origin:
                     await self.say(job.guild, 'Вернулся. Сообщение передал.')
                 elif not failed and not job.message and job.return_back and job.restore_allowed and self.current_channel(job.guild) == job.origin:
                     await self.say(job.guild, 'Вернулся.')
             except asyncio.CancelledError:
-                pass
+                cancelled=True
             except Exception as error:
+                failed=True
+                self.stage(job,'failed',error=type(error).__name__)
                 self.bot.logger.warning('Возврат после поручения voice не выполнен guild=%s: %s', job.guild.id, type(error).__name__)
             finally:
+                if cancelled:outcome='cancelled'
+                elif failed or not moved or job.return_back and not returned or job.message and not delivered:outcome='failed'
+                else:outcome='completed'
+                self.stage(job,outcome,outcome=outcome,delivered=delivered,returned=returned)
                 self.active.pop(job.guild.id, None)

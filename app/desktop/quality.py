@@ -13,6 +13,26 @@ REASONS={'named':'Обращение по имени','followup':'Продолж
 
 
 class QualityControls:
+    def build_errand(self,body):
+        block,layout=card('Голосовые поручения')
+        self.errand_status=label('Поручений пока нет. Например: «Перейди в Общий, скажи: мы готовы, и вернись».','subtitle')
+        layout.addWidget(self.errand_status)
+        self.errand_steps=QPlainTextEdit();self.errand_steps.setReadOnly(True);self.errand_steps.setMaximumHeight(140)
+        layout.addWidget(self.errand_steps);body.addWidget(block)
+
+    def refresh_errand(self):
+        if not hasattr(self,'errand_status'):return
+        guild=next((g for g in self.state.get('guilds',[]) if str(g['id'])==str(self.guild_id())),{})
+        task=guild.get('errand',{})
+        if not task:
+            self.errand_status.setText('Поручений в этом запуске ещё нет.');self.errand_steps.clear();return
+        names={'found':'Канал найден','moving':'Перехожу','joined':'Перешёл','delivering':'Озвучиваю сообщение',
+               'delivered':'Сообщение воспроизведено','returning':'Возвращаюсь','returned':'Вернулся',
+               'completed':'Выполнено','cancelled':'Отменено','failed':'Не выполнено полностью'}
+        self.errand_status.setText(task.get('origin','')+' → '+task.get('target','')+' · '+names.get(task.get('stage'),task.get('stage',''))+
+            ' · сообщение: '+('передано' if task.get('delivered') else 'не подтверждено'))
+        self.errand_steps.setPlainText('\n'.join(time.strftime('%H:%M:%S',time.localtime(e['at']))+' · '+names.get(e['stage'],e['stage']) for e in task.get('events',[])))
+
     def show_local_report(self,title,text):
         from PySide6.QtWidgets import QDialog,QVBoxLayout
         dialog=QDialog(self);dialog.setWindowTitle(title);dialog.resize(760,470)
