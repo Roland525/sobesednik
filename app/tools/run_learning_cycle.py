@@ -127,6 +127,14 @@ def cycle(guild):
     inference = ['--reasoning'] if config.ollama_reasoning else []
     stage = 'baseline'
     try:
+        import asyncio
+        from bot.feedback import FeedbackStore,evaluate_feedback,feedback_gate
+        feedback_store=FeedbackStore(ROOT/'data/learning.sqlite3')
+        try:feedback_cases=feedback_store.cases(guild)
+        finally:feedback_store.close()
+        atomic_json(run/'feedback-cases.json',feedback_cases)
+        feedback_before=asyncio.run(evaluate_feedback(config.ollama_host,config.ollama_model,feedback_cases))
+        atomic_json(run/'feedback-baseline.json',feedback_before)
         for stage_name, model in [('baseline', config.ollama_model)]:
             label = 'auto-' + stamp + '-' + stage_name
             execute([runtime_python, 'tools/evaluate_answers.py', '--model', model, '--label', label, '--resident-stt', *inference],
@@ -173,6 +181,9 @@ def cycle(guild):
         baseline = json.loads((run / 'baseline.json').read_text(encoding='utf-8'))
         evaluation = json.loads((run / 'candidate.json').read_text(encoding='utf-8'))
         reasons = quality_gate(baseline, evaluation, training)
+        feedback_after=asyncio.run(evaluate_feedback(config.ollama_host,candidate,feedback_cases))
+        atomic_json(run/'feedback-candidate.json',feedback_after)
+        reasons.extend(feedback_gate(feedback_before,feedback_after))
         state.update(status='rejected' if reasons else 'accepted', reasons=reasons, candidate=candidate)
         if not reasons:
             stage = 'activation'

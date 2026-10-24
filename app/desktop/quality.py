@@ -87,7 +87,36 @@ class QualityControls:
         layout.addWidget(self.turn_table)
         self.turn_detail=QPlainTextEdit();self.turn_detail.setReadOnly(True);self.turn_detail.setMinimumHeight(220)
         layout.addWidget(self.turn_detail);body.addWidget(block)
+        layout.addWidget(row(button('Не понял вопрос',lambda:self.correct_turn('question')),
+            button('Неверный ответ',lambda:self.correct_turn('answer')),button('Проверить исправления',self.check_feedback),None))
+        self.feedback_result=QPlainTextEdit();self.feedback_result.setReadOnly(True);self.feedback_result.setMaximumHeight(140)
+        layout.addWidget(self.feedback_result)
         self.turn_rows=[];self.turn_signature=None
+
+    def correct_turn(self,kind):
+        from PySide6.QtWidgets import QInputDialog
+        turn=self.selected_turn()
+        if not turn or not turn.get('user_id'):self.notice('Выберите реплику участника в диагностике.');return
+        guild=self.guild_id();rid=turn['id']
+        title='Какой вопрос ты произнёс?' if kind=='question' else 'Какой ответ правильный?'
+        value,ok=QInputDialog.getMultiLineText(self,'Исправить реплику',title,
+            turn.get('heard','') if kind=='question' else '')
+        if ok and value.strip():self.command('feedback_add',{'guild':guild,'turn_id':rid,'kind':kind,'correction':value})
+
+    def check_feedback(self):
+        if self.runtime.running():self.notice('Для локальной проверки сначала остановите бота.');return
+        if self.busy:return
+        guild=self.guild_id()
+        if not guild:self.notice('Выберите сервер.');return
+        from .runtime import run_step
+        model=self.profile.settings()['ollama_model'];root=self.profile.root
+        output=root/'reports/feedback-check.json'
+        def work(task):
+            self.runtime.ensure_ollama(self.cancel)
+            run_step([self.runtime.python,root/'tools/check_feedback.py','--guild',str(guild),'--model',model,'--output',output],
+                root,self.runtime.python,lambda text:task.progress.emit(0,'Проверка исправлений',text),self.cancel,900)
+            return json.loads(output.read_text(encoding='utf-8-sig'))
+        self.run_job(work,lambda report:self.feedback_result.setPlainText(json.dumps(report,ensure_ascii=False,indent=2)))
 
     def selected_turn(self):
         index=self.turn_table.currentRow()

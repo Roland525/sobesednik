@@ -13,7 +13,24 @@ class DesktopControl:
     async def dispatch(self, op, payload):
         guild=self.bot.get_guild(int(payload.get('guild',0)))
         if not guild: raise ValueError('Сервер не найден. Обновите список.')
-        if op=='join':
+        if op=='feedback_add':
+            from .feedback import FeedbackStore
+            session=self.bot.sessions.get(guild.id)
+            turn=next((row for row in session.journal.snapshot() if row['id']==payload.get('turn_id')),None) if session else None
+            if not turn:raise ValueError('Реплика уже очищена. Выберите реплику из текущего разговора.')
+            store=FeedbackStore(self.profile.root/'data/learning.sqlite3',secrets=(self.bot.config.discord_token,))
+            try:record=store.add(guild.id,turn,payload.get('kind'),payload.get('correction'),self.bot.config.wake_word)
+            finally:store.close()
+            if record.get('invalidated') and self.bot.learning:
+                old=record['invalidated']
+                with self.bot.learning.db:
+                    self.bot.learning.db.execute("DELETE FROM examples WHERE guild=? AND author=? AND kind='correction' AND prompt=? AND target=?",
+                        (guild.id,old['uid'],old['question'],old['answer']))
+            if record['trainable'] and self.bot.learning:
+                added=self.bot.learning.add(guild.id,record['uid'],record['uid'],'correction',record['question'],record['answer'],time.time())
+                if added:return 'Исправление сохранено в локальных проверках и учебных примерах.'
+            return 'Исправление сохранено локально. Эта запись не используется для изменения весов.'
+        elif op=='join':
             channel=guild.get_channel(int(payload.get('channel',0)))
             if not channel or getattr(channel.type,'value',channel.type)!=2: raise ValueError('Голосовой канал не найден')
             permissions=channel.permissions_for(guild.me)

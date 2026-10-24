@@ -123,6 +123,8 @@ class LearningCorpus:
         return len(examples)
 
     def forget(self, guild, uid):
+        from .feedback import purge_feedback
+        purge_feedback(self.db,guild,uid)
         self.db.execute('DELETE FROM examples WHERE guild=? AND (author=? OR context_author=?)', (guild, uid, uid))
         self.db.commit()
         self.humans.pop(guild, None)

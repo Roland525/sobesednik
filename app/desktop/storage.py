@@ -212,6 +212,9 @@ class Profile:
             if db is None: continue
             try:
                 with db:
+                    if name=='learning' and action in ('memory_forget','memory_clear','learning_clear'):
+                        from bot.feedback import purge_feedback
+                        purge_feedback(db,guild,int(payload['uid']) if action=='memory_forget' else None)
                     if action in ('memory_delete','learning_delete'):
                         table='examples' if name=='learning' else 'notes'
                         db.execute('DELETE FROM '+table+' WHERE guild=? AND rowid=?',(guild,int(payload['record_id'])))

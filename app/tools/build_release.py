@@ -22,6 +22,7 @@ TOOLS = ['setup.ps1', 'setup_learning.ps1', 'configure_token.ps1', 'ensure_ollam
          'create_promo_audio.py', 'render_promo.py', 'build_release.py']
 TOOLS += ['build_desktop.py']
 TOOLS += ['tune_runtime.py']
+TOOLS += ['check_feedback.py']
 
 
 def release_files():
