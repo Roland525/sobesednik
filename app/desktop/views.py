@@ -114,6 +114,7 @@ class Views:
         self.benchmark_result=QPlainTextEdit();self.benchmark_result.setReadOnly(True);self.benchmark_result.setMaximumHeight(180)
         self.benchmark_result.setPlaceholderText('Здесь появятся измерения на вашем компьютере.');layout.addWidget(self.benchmark_result)
         body.addWidget(block)
+        self.build_tuning(body)
         block,layout=card('Голос')
         form=QFormLayout(); form.setSpacing(15)
         self.wake_input=QLineEdit(); self.wake_input.setMaxLength(50); form.addRow('Имя обращения',self.wake_input)

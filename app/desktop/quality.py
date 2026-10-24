@@ -2,7 +2,7 @@
 import json
 import time
 from PySide6.QtWidgets import QTableWidget,QTableWidgetItem,QPlainTextEdit,QAbstractItemView,QHeaderView
-from .widgets import card,label
+from .widgets import card,label,button,row
 
 REASONS={'named':'Обращение по имени','followup':'Продолжение темы тем же участником',
          'clarification':'Уточнение команды или памяти','background':'Беседа канала — ответ не запрошен',
@@ -12,6 +12,40 @@ REASONS={'named':'Обращение по имени','followup':'Продолж
 
 
 class QualityControls:
+    def build_tuning(self,body):
+        block,layout=card('Подобрать настройки под компьютер')
+        layout.addWidget(label('Сравнение установленных моделей при бюджете 70 и 100. Синтетические вопросы проходят через речь, распознавание и озвучку, с Whisper в памяти. До 12 вариантов; может занять несколько минут. Бот должен быть остановлен. Настройки автоматически не меняются.','subtitle'))
+        self.tune_button=button('Подобрать настройки',self.start_tuning)
+        self.tune_apply=button('Применить рекомендацию',self.apply_tuning,True);self.tune_apply.setEnabled(False)
+        layout.addWidget(row(self.tune_button,self.tune_apply,button('Отменить подбор',self.cancel_operation),None))
+        self.tune_result=QPlainTextEdit();self.tune_result.setReadOnly(True);self.tune_result.setMaximumHeight(170)
+        layout.addWidget(self.tune_result);body.addWidget(block);self.tuning_report=None
+
+    def start_tuning(self):
+        if self.runtime.running():self.notice('Для сравнения сначала остановите бота.');return
+        if self.busy:return
+        names=getattr(self,'installed_model_names',[])
+        if not names:self.notice('Сначала обновите список установленных моделей.');return
+        from .tuning import run_tuning,format_tuning
+        candidates=[{'model':name,'resource_level':level} for name in names[:6] for level in (70,100)]
+        self.tune_apply.setEnabled(False);self.tuning_report=None
+        def work(task):
+            self.runtime.ensure_ollama(self.cancel)
+            return run_tuning(self.profile.root,candidates,self.cancel,lambda text:task.progress.emit(0,'Автоподбор',text))
+        def done(report):
+            self.tuning_report=report;self.tune_result.setPlainText(format_tuning(report))
+            self.tune_apply.setEnabled(bool(report.get('recommendation')))
+            self.notice('Подбор завершён. Результат синтетический; настройки изменятся только после применения.')
+        self.run_job(work,done)
+
+    def apply_tuning(self):
+        if self.runtime.running() or self.busy:self.notice('Остановите бота перед применением.');return
+        best=(self.tuning_report or {}).get('recommendation')
+        if not best:return
+        self.profile.save_settings({'ollama_model':best['model'],'resource_level':best['resource_level']})
+        self.populate_models(getattr(self,'installed_model_names',[]),best['model']);self.resource_slider.setValue(best['resource_level'])
+        self.notice('Рекомендация сохранена. Запустите бота для проверки в разговоре.')
+
     def build_diagnostics(self,body):
         block,layout=card('Последние реплики и ответы')
         layout.addWidget(label('Локальная диагностика: распознанная речь, правило ответа и сведения, переданные в модель. Последние 24 реплики; при сбросе разговора очищаются.','subtitle'))

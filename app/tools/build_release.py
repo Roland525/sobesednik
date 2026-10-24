@@ -21,6 +21,7 @@ TOOLS = ['setup.ps1', 'setup_learning.ps1', 'configure_token.ps1', 'ensure_ollam
          'evaluate_answers.py', 'evaluate_local_lora.py', 'check_training_preparation.py',
          'create_promo_audio.py', 'render_promo.py', 'build_release.py']
 TOOLS += ['build_desktop.py']
+TOOLS += ['tune_runtime.py']
 
 
 def release_files():
