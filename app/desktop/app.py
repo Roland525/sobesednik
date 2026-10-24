@@ -20,6 +20,7 @@ from .storage import Profile,default_root,install_payload,atomic_json,redact
 from .style import STYLE
 from .views import Views
 from .widgets import label,row,WaveMark
+from .version import VERSION
 
 REPOSITORY='https://github.com/Roland525/sobesednik'
 
@@ -68,6 +69,7 @@ class MainWindow(QMainWindow,Views):
         self.close_requested=False; self.resource_pending=False; self.memory_pending=False
         self.memory_reload=False; self.loaded_memory_key=None; self.last_memory_guild=None
         self.state={}; self.guilds=[]; self.memory_data=[]; self.token=''; self.account=None
+        self.available_update=None; self.update_check_pending=False; self.updating=False
         self.setWindowTitle('Собеседник — панель управления'); self.resize(1220,870); self.setMinimumSize(1040,720)
         self.setStyleSheet(STYLE)
         if self.payload.exists() and not self.runtime.running(): install_payload(self.payload,self.profile.root)
@@ -82,11 +84,23 @@ class MainWindow(QMainWindow,Views):
         self.navigation.addItems(['Обзор','Discord','Голос и ответы','Персона','Память','Журнал'])
         side.addWidget(self.navigation,1)
         side.addWidget(label('Локальные модели\nВаш компьютер. Ваши данные.','subtitle'))
-        side.addWidget(label('Windows · версия 1.0.2','eyebrow')); outer.addWidget(sidebar)
+        from .widgets import button
+        side.addWidget(label('Windows · версия '+VERSION,'eyebrow'))
+        self.check_update_button=button('Проверить обновления',lambda:self.check_for_updates(manual=True))
+        side.addWidget(self.check_update_button); outer.addWidget(sidebar)
         content=QWidget(); content_layout=QVBoxLayout(content); content_layout.setContentsMargins(30,22,26,20); content_layout.setSpacing(17)
         self.guild_box=QComboBox(); self.guild_box.setMinimumWidth(230); self.guild_box.addItem('Сервер появится после запуска','')
         self.status_label=label('Остановлен','status',False)
         content_layout.addWidget(row(label('ПАНЕЛЬ УПРАВЛЕНИЯ','eyebrow'),None,self.guild_box,self.status_label))
+        self.update_banner=QFrame(); self.update_banner.setObjectName('card')
+        update_layout=QVBoxLayout(self.update_banner); update_layout.setContentsMargins(18,14,18,14)
+        self.update_text=label('','subtitle'); update_layout.addWidget(self.update_text)
+        self.update_button=button('Скачать обновление',self.apply_update,True)
+        self.update_cancel=button('Отменить загрузку',self.cancel_operation); self.update_cancel.hide()
+        update_layout.addWidget(row(self.update_button,self.update_cancel,None))
+        from PySide6.QtWidgets import QProgressBar
+        self.update_progress=QProgressBar(); self.update_progress.setRange(0,100); self.update_progress.hide()
+        update_layout.addWidget(self.update_progress); self.update_banner.hide(); content_layout.addWidget(self.update_banner)
         self.notice_label=label('','notice'); self.notice_label.hide(); content_layout.addWidget(self.notice_label)
         self.pages=QStackedWidget()
         for build in [self.overview_view,self.discord_view,self.settings_view,self.persona_view,self.memory_view,self.logs_view]:
@@ -103,10 +117,23 @@ class MainWindow(QMainWindow,Views):
         self.remember_channel.toggled.connect(self.remember_changed)
         self.refresh_timer=QTimer(self); self.refresh_timer.timeout.connect(self.refresh)
         self.resource_timer=QTimer(self); self.resource_timer.timeout.connect(self.refresh_resources)
+        self.update_timer=QTimer(self); self.update_timer.timeout.connect(self.check_for_updates)
         if start_timers: self.refresh_timer.start(750); self.resource_timer.start(3500)
         self.refresh()
         if start_timers: QTimer.singleShot(100,self.refresh_resources)
         if start_timers and self.runtime.installed(): QTimer.singleShot(300,self.refresh_models)
+        if start_timers:
+            QTimer.singleShot(1800,self.check_for_updates); self.update_timer.start(6*60*60*1000)
+        report=self.profile.root/'reports/app-update-result.json'
+        if report.exists():
+            try:
+                result=json.loads(report.read_text(encoding='utf-8-sig'))
+                if not result.get('shown'):
+                    if result.get('ok') and result.get('version')==VERSION:
+                        self.notice('Приложение обновлено до '+VERSION+'. Настройки, модели и память сохранены.')
+                    else: self.notice('Обновление не завершено: '+str(result.get('error','версия приложения не изменилась'))+'. Подробности в logs/app-update-install.log.')
+                    result['shown']=True; atomic_json(report,result)
+            except (OSError,ValueError): pass
 
     def notice(self,text):
         self.notice_label.setText(redact(text,self.token)); self.notice_label.setVisible(bool(text))
@@ -139,6 +166,75 @@ class MainWindow(QMainWindow,Views):
             self.refresh()
             if self.close_requested: QTimer.singleShot(50,self.close)
         task.finished.connect(finished); task.start(); self.refresh()
+        return task
+
+    def check_for_updates(self,manual=False):
+        if self.update_check_pending or self.updating: return
+        self.update_check_pending=True; self.check_update_button.setEnabled(False)
+        self.check_update_button.setText('Проверяем…')
+        from .updates import check_update
+        task=Task(lambda _:check_update(),self.token,self); self.jobs.append(task)
+        def done(info):
+            self.offer_update(info)
+            if manual and info is None: self.notice('Установлена актуальная версия '+VERSION+'.')
+        def failed(message):
+            if manual: self.notice('Не удалось проверить обновления: '+message+' Можно повторить позже.')
+        def finish():
+            self.update_check_pending=False; self.check_update_button.setEnabled(True)
+            self.check_update_button.setText('Проверить обновления')
+            self.jobs.remove(task); task.deleteLater()
+            if self.close_requested: QTimer.singleShot(50,self.close)
+        task.result.connect(done); task.error.connect(failed); task.finished.connect(finish); task.start()
+
+    def offer_update(self,info):
+        if self.updating: return
+        self.available_update=info; self.update_banner.setVisible(info is not None)
+        if info:
+            self.update_text.setText(f'Доступна версия {info.version} · {info.size/1024**2:.0f} МБ. После загрузки приложение обновится и откроется снова.')
+            self.update_button.setText('Скачать обновление'); self.update_progress.hide(); self.update_cancel.hide()
+        self.refresh()
+
+    def apply_update(self):
+        if self.busy or self.updating:
+            self.notice('Дождитесь завершения текущей операции.'); return
+        info=self.available_update
+        if not info: self.check_for_updates(manual=True); return
+        from .updates import download_update
+        state=self.protocol.status(); session=state.get('guilds',[])
+        channel=next((int(g['connected_channel']) for g in session if g.get('connected_channel')),0)
+        resume=channel if self.runtime.running() else -1
+        self.updating=True; self.update_progress.setValue(0); self.update_progress.show(); self.update_cancel.show()
+        self.update_text.setText('Скачиваем обновление. Бот продолжает работать до начала установки.')
+        def prepare(task):
+            installer=download_update(info,self.profile.root,task.progress.emit,self.cancel)
+            if self.cancel.is_set(): raise InterruptedError('Загрузка обновления отменена.')
+            task.progress.emit(100,'Установка обновления','Файл проверен. Останавливаем бота перед установкой…')
+            self.runtime.close()
+            return installer
+        def failed(message):
+            self.updating=False; self.update_cancel.hide(); self.update_progress.hide()
+            self.update_text.setText('Обновление не установлено: '+message)
+            self.update_button.setText('Повторить обновление'); self.refresh()
+        task=self.run_job(prepare,lambda path:self.queue_update_handoff(info,path,resume))
+        if task: task.error.connect(failed)
+
+    def queue_update_handoff(self,info,path,resume):
+        def finish():
+            if self.jobs: QTimer.singleShot(50,finish); return
+            from .updates import start_installer
+            try:
+                app=Path(sys.executable) if getattr(sys,'frozen',False) else Path(os.environ.get('LOCALAPPDATA',''))/'Programs/Sobesednik/Sobesednik.exe'
+                if not app.is_file(): raise RuntimeError('Для установки обновления откройте установленное приложение EXE.')
+                start_installer(info,path,self.profile.root,app,os.getpid(),resume)
+            except Exception as error:
+                self.updating=False; self.update_cancel.hide(); self.notice('Не удалось запустить установщик: '+str(error)); self.refresh(); return
+            self.force_close=True; self.close(); QApplication.instance().quit()
+        QTimer.singleShot(0,finish)
+
+    def resume_updated_bot(self,channel):
+        if self.busy: QTimer.singleShot(250,lambda:self.resume_updated_bot(channel)); return
+        if not self.runtime.running():
+            self.run_job(lambda _:self.runtime.start(resume_channel=channel),lambda _:self.notice('Обновление завершено. Бот запускается с прежними настройками.'))
 
     def reload_forms(self):
         try:
@@ -209,6 +305,7 @@ class MainWindow(QMainWindow,Views):
         self.install_button.setEnabled(not running and not self.busy)
         self.learning_install.setEnabled(not running and not self.busy and self.runtime.installed())
         self.model_cancel.setEnabled(self.busy)
+        self.update_button.setEnabled(bool(self.available_update) and not self.busy and not self.updating)
         if self.state: self.update_guilds(self.state.get('guilds',[]))
         else: self.guild_changed()
         if self.runtime.installed():
@@ -243,6 +340,10 @@ class MainWindow(QMainWindow,Views):
         self.run_job(restart,lambda _:self.notice('Бот перезапускается с сохранёнными настройками.'))
 
     def install_update(self,percent,title,line):
+        if title in ('Обновление приложения','Установка обновления'):
+            self.update_progress.setValue(percent); self.update_text.setText(line)
+            if title=='Установка обновления': self.update_cancel.hide()
+            return
         self.install_progress.setValue(percent); self.install_stage.setText(title)
         if title=='Загрузка модели':
             self.model_progress.setValue(percent); self.model_status.setText(line)
@@ -551,6 +652,7 @@ def main():
     parser.add_argument('--data-dir',type=Path)
     parser.add_argument('--capture-dir',type=Path)
     parser.add_argument('--verify-runtime',action='store_true',help='Проверка установленного backend без входа в Discord')
+    parser.add_argument('--resume-after-update',type=int,default=None,help=argparse.SUPPRESS)
     args=parser.parse_args()
     root=args.data_dir or default_root()
     prefs=default_root().parent/'desktop.json'
@@ -572,6 +674,8 @@ def main():
     except Exception as error:
         QMessageBox.critical(None,'Собеседник',str(error)); return 1
     window.custom_root=bool(args.data_dir); window.show()
+    if args.resume_after_update is not None:
+        QTimer.singleShot(1200,lambda:window.resume_updated_bot(args.resume_after_update))
     if args.capture_dir:
         def capture():
             args.capture_dir.mkdir(parents=True,exist_ok=True)

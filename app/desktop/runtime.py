@@ -112,7 +112,7 @@ class Runtime:
         self.server_log.close(); self.server_log=None
         raise RuntimeError('Ollama не запустилась. Смотрите журнал desktop-ollama.log.')
 
-    def start(self):
+    def start(self,resume_channel=0):
         if self.running(): raise RuntimeError('Бот уже запущен')
         if self.process: self.process.close(); self.process=None
         if self.log_handle: self.log_handle.close(); self.log_handle=None
@@ -123,7 +123,9 @@ class Runtime:
         env=child_env(); env['DISCORD_TOKEN']=token
         (self.root/'logs').mkdir(exist_ok=True)
         self.log_handle=(self.root/'logs/desktop-startup.log').open('a',encoding='utf-8')
-        self.process=OwnedProcess(self.bot_command(),self.root,self.python,env,self.log_handle)
+        command=self.bot_command()
+        if resume_channel: command += ['--resume-channel',str(int(resume_channel))]
+        self.process=OwnedProcess(command,self.root,self.python,env,self.log_handle)
 
     def stop(self, timeout=40):
         if not self.running():

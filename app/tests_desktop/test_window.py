@@ -111,3 +111,37 @@ class WindowTests(unittest.TestCase):
         self.window.save_persona();self.window.context_edit.setPlainText('Человек: Другая тема')
         from desktop.storage import Profile
         self.assertIn('кратко',Profile(self.window.profile.root).persona())
+
+    def test_available_update_shows_banner_without_touching_bot_or_settings(self):
+        from desktop.updates import UpdateInfo
+        info=UpdateInfo('99.0.0','https://github.com/Roland525/sobesednik/releases/download/v99.0.0/Sobesednik-Setup-99.0.0.exe',8,'a'*64,'')
+        before=self.window.profile.settings()
+        with patch.object(self.window.runtime,'close') as close:
+            self.window.offer_update(info)
+        self.assertFalse(self.window.update_banner.isHidden())
+        self.assertIn('99.0.0',self.window.update_text.text())
+        self.assertIn('Скачать',self.window.update_button.text())
+        close.assert_not_called();self.assertEqual(before,self.window.profile.settings())
+
+    def test_manual_update_check_reports_current_version_without_installing(self):
+        from desktop.version import VERSION
+        with patch('desktop.updates.check_update',return_value=None):
+            self.window.check_for_updates(manual=True)
+            deadline=__import__('time').monotonic()+3
+            while self.window.jobs and __import__('time').monotonic()<deadline:
+                self.app.processEvents();QTest.qWait(10)
+        self.assertIn(VERSION,self.window.notice_label.text())
+        self.assertTrue(self.window.update_banner.isHidden())
+
+    def test_update_download_precedes_bot_shutdown_and_handoff(self):
+        from desktop.updates import UpdateInfo
+        info=UpdateInfo('99.0.0','',8,'a'*64,'');events=[]
+        self.window.offer_update(info)
+        with patch('desktop.updates.download_update',side_effect=lambda *a:(events.append('download') or Path(self.temp.name)/'update.exe')), \
+             patch.object(self.window.runtime,'close',side_effect=lambda:events.append('stop')), \
+             patch.object(self.window,'queue_update_handoff',side_effect=lambda *a:events.append('handoff')):
+            self.window.apply_update()
+            deadline=__import__('time').monotonic()+3
+            while self.window.jobs and __import__('time').monotonic()<deadline:
+                self.app.processEvents();QTest.qWait(10)
+        self.assertEqual(events,['download','stop','handoff'])

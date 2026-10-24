@@ -64,8 +64,10 @@ def prepare(build):
 
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--iscc',type=Path)
-    parser.add_argument('--prepare-only',action='store_true'); parser.add_argument('--version',default='1.0.2')
-    args=parser.parse_args(); build=ROOT/'.desktop-build'
+    from desktop.version import VERSION
+    parser.add_argument('--prepare-only',action='store_true'); parser.add_argument('--version',default=VERSION)
+    parser.add_argument('--build-dir',type=Path,default=ROOT/'.desktop-build')
+    args=parser.parse_args(); build=args.build_dir.resolve()
     prepare(build)
     if args.prepare_only: return
     subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir','--windowed',
