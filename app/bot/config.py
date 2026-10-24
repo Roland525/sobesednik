@@ -1,6 +1,7 @@
 from dataclasses import dataclass, fields, field
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 import ipaddress
@@ -106,6 +107,11 @@ class Config:
         return path if path.is_absolute() else ROOT / path
 
     def validate(self):
+        for key,limit in [('bot_name',32),('wake_word',50)]:
+            value=getattr(self,key)
+            if (not isinstance(value,str) or not 1<=len(value.strip())<=limit
+                or not re.fullmatch(r'[\w -]+',value) or not any(c.isalpha() for c in value)):
+                raise ValueError('Имя бота: буквы, цифры, пробел или дефис; до '+str(limit)+' символов.')
         for item in fields(self):
             if item.type is str and not isinstance(getattr(self, item.name), str):
                 raise ValueError(f'{item.name} должен быть строкой')

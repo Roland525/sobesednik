@@ -86,6 +86,7 @@ class DesktopControl:
                                      'members':len(channel.members)})
             vc=guild.voice_client
             guilds.append({'id':str(guild.id),'name':guild.name,'channels':channels,
+                           'bot_display_name':getattr(guild.me,'display_name',self.bot.config.bot_name),
                            'connected_channel':str(vc.channel.id) if vc and vc.is_connected() else '',
                            'errand':self.bot.voice_routes.status(guild.id)})
         for gid,session in self.bot.sessions.items():

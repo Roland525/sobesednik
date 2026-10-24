@@ -6,7 +6,7 @@ import re
 import time
 import numpy as np
 
-from ..conversation import addressed
+from ..conversation import addressed,wake_aliases
 
 
 class AudioService:
@@ -25,6 +25,7 @@ class AudioService:
         self.control_grammar = ''
         self._control_gate = self._control_verifier = None
         self.decode_future = None
+        self.wake_gate_available=True
 
     def load(self):
         from vosk import Model, KaldiRecognizer, SetLogLevel
@@ -32,10 +33,13 @@ class AudioService:
         from faster_whisper import WhisperModel
         SetLogLevel(-1)
         self.wake_model = Model(str(self.config.path(self.config.wake_model)))
-        words = [self.config.wake_word.lower(), 'серёга', 'серёжа', 'эй', 'слушай', 'алло', 'привет', 'ну']
+        name_words=self.config.wake_word.casefold().replace('ё','е').split()
+        self.wake_gate_available=len(name_words)==1 and all(self.wake_model.vosk_model_find_word(word)>=0 for word in name_words)
+        aliases=[word for name in wake_aliases(self.config.wake_word) for word in name.split()]
+        words = [*aliases, 'эй', 'слушай', 'алло', 'привет', 'ну']
         words = [word for word in words if self.wake_model.vosk_model_find_word(word) >= 0]
         self.grammar = json.dumps([*words, '[unk]'], ensure_ascii=False)
-        control_words = [self.config.wake_word.lower(), 'серёга', 'серёжа', 'эй', 'заткнись', 'замолчи', 'помолчи', 'молчи',
+        control_words = [*aliases, 'эй', 'заткнись', 'замолчи', 'помолчи', 'молчи',
                          'завали', 'ебало', 'закрой', 'рот', 'пожалуйста', 'нахуй',
                          'не', 'он', 'мне', 'сказал', 'значит', 'блять', 'блядь', 'уже', 'ну',
                          'можешь', 'помолчать', 'замолчать', 'заткнуться']
@@ -127,7 +131,8 @@ class AudioService:
                 self.last_ms['stt_busy_rejected'] = 1
                 return ''
             wake_end = 0.0
-            if not active:
+            gate_used=not active and self.wake_gate_available and len(self.config.wake_word.split())==1
+            if gate_used:
                 start = time.perf_counter()
                 gate_text = await loop.run_in_executor(self.executor, self.wake_transcript, pcm)
                 self.last_ms['wake_ms'] = (time.perf_counter() - start) * 1000
@@ -140,6 +145,7 @@ class AudioService:
             # confirm the vocative. For long questions Whisper may omit the name;
             # verify the audio around its Vosk timestamp and retain the question.
             if not active and text and not addressed(text, self.config.wake_word)[0]:
+                if not gate_used:return ''
                 prefix = pcm[int(max(0, self.wake_start - .18) * 32000):int((wake_end + .18) * 32000)]
                 confirmed = await self.decode(prefix)
                 if not addressed(confirmed, self.config.wake_word)[0]:

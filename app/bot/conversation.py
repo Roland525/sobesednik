@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import re
 import time
 
-from .persona import load_system_prompt
+from .persona import load_system_prompt,identity_prompt
 from .security import safe_output
 from .memory import MEMORY_MARKER, MEMORY_RULES
 
@@ -37,10 +37,15 @@ def likely_followup(text, history):
                 or ('?' in value and len(value.split()) >= 3))
 
 
+def wake_aliases(wake_word):
+    name=wake_word.casefold().replace('ё','е').strip()
+    return {name,'серега','серег','сережа','сереж'} if name in ('собеседник','серега','серег','сережа','сереж') else {name}
+
+
 def addressed(text: str, wake_word='серёга'):
     """Recognize a vocative anywhere, preserving both halves of the question."""
     normalized = text.lower().replace('ё', 'е')
-    aliases = {wake_word.lower().replace('ё', 'е'), 'серега', 'серег', 'сережа', 'сереж'}
+    aliases = wake_aliases(wake_word)
     pattern = r'^\s*[«"\[]?\s*(?:(?:эй|слушай|слушай-ка|ну|алло|привет|здарова|здорово)\s*[,!:.—-]?\s+)?(?:' + '|'.join(re.escape(x) for x in aliases) + r')\b\s*[,!?:.\-—]*\s*'
     match = re.match(pattern, normalized)
     if match:
@@ -121,7 +126,7 @@ class Conversation:
         name = re.sub(r'[\r\n\[\]:]', ' ', speaker)[:64]
         content = safe_output(f'[Участник {name}]: {text[:2000]}', [self.config.discord_token])
         user = {'role': 'user', 'content': content}
-        system = load_system_prompt() + '\n\n' + VOICE_TURN_RULES
+        system = load_system_prompt() + '\n\n' + VOICE_TURN_RULES+'\n\n'+identity_prompt(self.config)
         memory = []
         history = list(self.history)
         if memory_context:
@@ -175,7 +180,7 @@ class Conversation:
 одну интересную тему: технологии, игры, кино, необычное наблюдение или мысленный эксперимент.
 Одна небольшая мысль и один открытый вопрос, всего 1–2 предложения. Без приветствия заново,
 банальных «как дела», списка вариантов, повторов, выдуманных событий из своей жизни и оценки людей.'''
-        return [{'role': 'system', 'content': load_system_prompt()}, *self.history,
+        return [{'role': 'system', 'content': load_system_prompt()+'\n\n'+identity_prompt(self.config)}, *self.history,
                 {'role': 'system', 'content': instruction}]
 
     def reset(self):

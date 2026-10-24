@@ -1,37 +1,58 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLineEdit,QComboBox,
     QDoubleSpinBox,QSpinBox,QCheckBox,QPlainTextEdit,QProgressBar,QTableWidget,QHeaderView,
-    QAbstractItemView,QScrollArea,QSlider)
-from .widgets import label,button,card,row,MetricCard
+    QAbstractItemView,QScrollArea,QSlider,QTabWidget)
+from .widgets import label,button,card,row,MetricCard,Disclosure
 
 
-def page(title,subtitle,toolbar=None):
+def scroll_body():
+    scroll=QScrollArea();scroll.setWidgetResizable(True)
+    inner=QWidget();body=QVBoxLayout(inner);body.setContentsMargins(0,5,10,8);body.setSpacing(16)
+    scroll.setWidget(inner)
+    return scroll,body
+
+
+def page(title,subtitle,toolbar=None,scroll=True):
     outer=QWidget(); layout=QVBoxLayout(outer); layout.setContentsMargins(0,0,0,0); layout.setSpacing(16)
     layout.addWidget(label(title,'title')); layout.addWidget(label(subtitle,'subtitle'))
     if toolbar is not None: layout.addWidget(toolbar)
-    scroll=QScrollArea(); scroll.setWidgetResizable(True)
-    inner=QWidget(); body=QVBoxLayout(inner); body.setContentsMargins(0,5,10,8); body.setSpacing(16)
-    scroll.setWidget(inner); layout.addWidget(scroll,1)
+    if scroll:
+        area,body=scroll_body();layout.addWidget(area,1)
+    else:body=layout
     return outer,body
 
 
 class Views:
     def overview_view(self):
-        page_widget,body=page('Всё под рукой','Голосовой собеседник в Discord. Модели и данные остаются на вашем компьютере.')
+        page_widget,body=page('Главная','Запусти бота, выбери канал и общайся.')
         hero,layout=card(hero=True)
-        layout.addWidget(label('ЛОКАЛЬНЫЙ ИИ · БЕЗ ОПЛАТЫ API','eyebrow'))
         self.hero_title=label('Начнём с первой настройки','heroTitle'); layout.addWidget(self.hero_title)
         self.hero_detail=label('Установим модели, подключим Discord и выберем голосовой канал.','subtitle'); layout.addWidget(self.hero_detail)
         self.start_button=button('Запустить бота',self.start_bot,True)
         self.stop_button=button('Остановить',self.stop_bot)
         self.restart_button=button('Перезапустить',self.restart_bot)
         self.hush_button=button('Остановить речь',lambda:self.command('mute'))
-        layout.addWidget(row(self.start_button,self.stop_button,self.restart_button,self.hush_button,None)); body.addWidget(hero)
+        layout.addWidget(row(self.start_button,self.stop_button,self.restart_button,self.hush_button,None))
+        self.home_connection=QVBoxLayout();self.home_connection.setSpacing(8);layout.addLayout(self.home_connection)
+        body.addWidget(hero)
+        identity,identity_layout=card('Имя бота')
+        self.bot_name_input=QLineEdit();self.bot_name_input.setMaxLength(32);self.bot_name_input.setPlaceholderText('Например: Борис')
+        self.bot_name_input.setAccessibleName('Имя бота');self.apply_name_button=button('Применить имя',self.save_identity)
+        self.bot_name_input.returnPressed.connect(self.save_identity)
+        self.apply_name_button.setToolTip('Сохранить имя обращения и ник. Запущенный бот перезапустится и вернётся в свой канал.')
+        identity_layout.addWidget(row(self.bot_name_input,self.apply_name_button))
+        self.identity_status=label('Одно имя для обращения голосом и ника на сервере.','subtitle');identity_layout.addWidget(self.identity_status)
+        body.addWidget(identity)
+        body.addWidget(row(button('Настроить голос',lambda:self.navigation.setCurrentRow(2)),
+            button('Изменить характер',lambda:self.navigation.setCurrentRow(3)),button('Открыть память',lambda:self.navigation.setCurrentRow(4)),None))
+        self.performance=Disclosure('Нагрузка компьютера и задержка');body.addWidget(self.performance)
         metrics=QHBoxLayout(); metrics.setSpacing(12)
         self.cpu_card=MetricCard('ПРОЦЕССОР'); self.ram_card=MetricCard('ПАМЯТЬ')
         self.gpu_card=MetricCard('ВИДЕОКАРТА'); self.latency_card=MetricCard('ДО НАЧАЛА ОТВЕТА')
         for item in [self.cpu_card,self.ram_card,self.gpu_card,self.latency_card]: metrics.addWidget(item)
-        body.addLayout(metrics)
+        self.performance.body.addLayout(metrics)
+        self.maintenance=Disclosure('Установка и обслуживание',expanded=not self.runtime.installed());body.addWidget(self.maintenance)
+        self.last_install_state=self.runtime.installed();maintenance=self.maintenance.body
         setup,layout=card('Первая настройка и модели')
         layout.addWidget(label('Мастер скачает отдельный Python, зависимости, Ollama и локальные модели. Нужно около 20 ГБ свободного места. Первый запуск займёт время: объём загрузки — несколько гигабайт.','subtitle'))
         self.stt_choice=QComboBox(); self.stt_choice.addItem('Точное распознавание · large-v3-turbo','large-v3-turbo'); self.stt_choice.addItem('Экономное распознавание · small','small')
@@ -43,15 +64,15 @@ class Views:
         layout.addWidget(self.install_progress)
         self.install_log=QPlainTextEdit(); self.install_log.setReadOnly(True); self.install_log.setMaximumBlockCount(400); self.install_log.setMaximumHeight(120)
         self.install_log.setPlaceholderText('Здесь появятся ход установки и подробности ошибок.'); layout.addWidget(self.install_log)
-        body.addWidget(setup)
+        maintenance.addWidget(setup)
         folder,layout=card('Папка данных')
         self.folder_label=label(str(self.profile.root),'subtitle'); self.folder_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.folder_label); layout.addWidget(row(button('Открыть папку',self.open_folder),button('Выбрать другую папку',self.choose_root),None))
         layout.addWidget(label('Рекомендуется NVIDIA с 8 ГБ видеопамяти и 32 ГБ RAM. Работа на CPU заметно медленнее.','subtitle'))
-        body.addWidget(folder); body.addStretch(); return page_widget
+        maintenance.addWidget(folder); body.addStretch(); return page_widget
 
     def discord_view(self):
-        page_widget,body=page('Подключение к Discord','Один бот-аккаунт. Без пользовательских аккаунтов и без облачной обработки голоса.')
+        page_widget,body=page('Подключение','Настрой один раз. Запуск и выбор канала находятся на главной.')
         block,layout=card('1. Создайте бота и скопируйте токен')
         layout.addWidget(label('Откройте Developer Portal → New Application → Bot → Reset Token. Скопируйте Bot Token. В Discord нельзя выдать токен по общей прямой ссылке — он создаётся в вашем приложении.','subtitle'))
         layout.addWidget(row(button('Открыть Developer Portal',self.open_portal),button('Подробная инструкция',self.open_instructions),None))
@@ -60,22 +81,26 @@ class Views:
         self.token_status=label('Токен ещё не сохранён','subtitle'); layout.addWidget(self.token_status)
         layout.addWidget(row(button('Проверить и сохранить',self.check_token,True),button('Пригласить бота на сервер',self.invite_bot),None))
         layout.addWidget(label('Токен защищён Windows для вашей учётной записи. Он не отправляется модели и не включается в журнал.','subtitle')); body.addWidget(block)
-        block,layout=card('2. Запустите бота и выберите канал')
-        layout.addWidget(label('После запуска появятся серверы и голосовые каналы, к которым бот имеет доступ. Для подключения нужны права «Просматривать канал», «Подключаться», «Говорить».','subtitle'))
+        layout=self.home_connection
+        layout.addWidget(label('Канал Discord','subtitle'))
         self.channel_box=QComboBox(); self.channel_box.setMinimumWidth(270)
         self.join_button=button('Присоединиться',self.join_channel,True)
         self.leave_button=button('Выйти из канала',lambda:self.command('leave'))
         layout.addWidget(row(self.channel_box,self.join_button,self.leave_button,None))
-        self.channel_status=label('Запустите бота на вкладке «Обзор».','subtitle'); layout.addWidget(self.channel_status)
+        self.channel_status=label('Запусти бота — здесь появятся доступные каналы.','subtitle'); layout.addWidget(self.channel_status)
         self.remember_channel=QCheckBox('Подключаться к выбранному каналу при запуске'); self.remember_channel.setChecked(True); layout.addWidget(self.remember_channel)
-        layout.addWidget(label('Server Members, Presence и Message Content intents для обычных slash-команд не требуются. Полные права администратора боту не нужны.','subtitle'))
-        body.addWidget(block);self.build_errand(body); body.addStretch(); return page_widget
+        self.build_errand(body); body.addStretch(); return page_widget
 
     def settings_view(self):
         self.settings_save_button=button('Сохранить',self.save_settings,True)
         self.settings_restart_button=button('Сохранить и перезапустить',lambda:self.save_settings(True))
         self.settings_toolbar=row(self.settings_save_button,self.settings_restart_button,None)
-        page_widget,body=page('Голос и ответы','Настройте звучание и поведение. Изменения параметров применяются после перезапуска бота.',self.settings_toolbar)
+        page_widget,root=page('Настройки бота','Выбери нужную вкладку. После изменений нажми «Сохранить и перезапустить».',self.settings_toolbar,scroll=False)
+        self.settings_tabs=QTabWidget();root.addWidget(self.settings_tabs,1)
+        areas=[]
+        for title in ('Голос','Модель','Общение'):
+            area,tab_body=scroll_body();self.settings_tabs.addTab(area,title);areas.append(tab_body)
+        voice_body,model_body,conversation_body=areas;body=model_body
         block,layout=card('Модель и ресурсы компьютера')
         form=QFormLayout(); form.setSpacing(15)
         self.model_choice=QComboBox();self.model_choice.setMinimumContentsLength(24)
@@ -94,6 +119,7 @@ class Views:
         layout.addWidget(self.resource_help)
         self.model_status=label('Нажмите «Обновить список», чтобы проверить установленные модели.','subtitle'); layout.addWidget(self.model_status)
         layout.addWidget(row(button('Обновить список',self.refresh_models),None))
+        downloads=Disclosure('Добавить модель');layout.addWidget(downloads);download_layout=downloads.body
         from .models import CATALOG
         self.model_download=QComboBox()
         self.model_download.setMinimumContentsLength(24);self.model_download.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -102,9 +128,12 @@ class Views:
         self.model_cancel=button('Отменить загрузку',self.cancel_operation); self.model_cancel.setEnabled(False)
         self.model_download_button=button('Скачать модель',self.download_model,True)
         self.model_download.currentIndexChanged.connect(self.update_model_actions)
-        layout.addWidget(self.model_download)
-        layout.addWidget(row(self.model_download_button,self.model_cancel,None))
-        self.model_progress=QProgressBar(); self.model_progress.setRange(0,100); self.model_progress.setValue(0); layout.addWidget(self.model_progress)
+        download_layout.addWidget(self.model_download)
+        download_layout.addWidget(row(self.model_download_button,self.model_cancel,None))
+        self.model_progress=QProgressBar(); self.model_progress.setRange(0,100); self.model_progress.setValue(0); download_layout.addWidget(self.model_progress)
+        body.addWidget(block)
+        comparison=Disclosure('Сравнение моделей и автоподбор — дополнительно');body.addWidget(comparison)
+        block,layout=card('Проверка выбранной модели')
         self.benchmark_button=button('Проверить выбранную модель',self.benchmark_model)
         self.benchmark_cancel=button('Отменить проверку',self.cancel_operation);self.benchmark_cancel.setEnabled(False)
         layout.addWidget(row(self.benchmark_button,self.benchmark_cancel,None))
@@ -113,15 +142,16 @@ class Views:
         layout.addWidget(benchmark_help)
         self.benchmark_result=QPlainTextEdit();self.benchmark_result.setReadOnly(True);self.benchmark_result.setMaximumHeight(180)
         self.benchmark_result.setPlaceholderText('Здесь появятся измерения на вашем компьютере.');layout.addWidget(self.benchmark_result)
-        body.addWidget(block)
-        self.build_tuning(body)
+        comparison.body.addWidget(block)
+        self.build_tuning(comparison.body);body.addStretch();body=voice_body
         block,layout=card('Голос')
         form=QFormLayout(); form.setSpacing(15)
-        self.wake_input=QLineEdit(); self.wake_input.setMaxLength(50); form.addRow('Имя обращения',self.wake_input)
         self.voice_choice=QComboBox(); self.voice_choice.addItems(['M1','M2','M3','M4','M5']); form.addRow('Голос Supertonic',self.voice_choice)
         self.speed=QDoubleSpinBox(); self.speed.setRange(.7,1.5); self.speed.setSingleStep(.02); self.speed.setDecimals(2); form.addRow('Темп речи · 1,00 — обычный',self.speed)
         self.volume=QDoubleSpinBox(); self.volume.setRange(.1,2); self.volume.setSingleStep(.05); self.volume.setDecimals(2); form.addRow('Громкость',self.volume)
         layout.addLayout(form); body.addWidget(block)
+        layout.addWidget(label('Имя бота меняется на главной. Темп речи влияет на произношение, а скорость подготовки ответа — во вкладке «Модель».','subtitle'))
+        body.addStretch();body=conversation_body
         block,layout=card('Поведение и контекст')
         form=QFormLayout(); form.setSpacing(15)
         self.mode_choice=QComboBox(); self.mode_choice.addItem('Обращения по имени','strict'); self.mode_choice.addItem('Обращения и очень редкие дополнения','rare'); form.addRow('Когда отвечать',self.mode_choice)
@@ -136,12 +166,12 @@ class Views:
         body.addStretch(); return page_widget
 
     def persona_view(self):
-        page_widget,body=page('Персона и разговор','Характер бота и текущая история — отдельные настройки. Постоянная память находится в следующем разделе.',row(button('Сохранить персону',self.save_persona,True),None))
+        page_widget,body=page('Характер бота','Опиши, как бот должен общаться. Изменения действуют после сохранения.',row(button('Сохранить характер',self.save_persona,True),None))
         block,layout=card('Как Собеседник общается')
         layout.addWidget(label('Опишите характер, манеру речи и предпочтения. При сохранении создаётся резервная копия. Новая персона используется в следующих вопросах.','subtitle'))
         self.persona_edit=QPlainTextEdit(); self.persona_edit.setMinimumHeight(200); layout.addWidget(self.persona_edit)
         body.addWidget(block)
-        block,layout=card('Контекст текущего разговора')
+        block=Disclosure('Текущая беседа — дополнительно');layout=block.body
         layout.addWidget(label('Загрузите историю выбранного сервера. Можно исправить реплики или сбросить разговор. Каждая новая реплика начинается с «Человек:» или «Собеседник:». Это не изменяет постоянную память.','subtitle'))
         self.context_edit=QPlainTextEdit(); self.context_edit.setMinimumHeight(170); self.context_edit.setPlaceholderText('Человек: О чём мы говорили?\nСобеседник: О локальных моделях.'); layout.addWidget(self.context_edit)
         layout.addWidget(label('«Загрузить» показывает текущий разговор. Для изменения нажмите «Применить». После перезапуска этот контекст очищается; важные факты сохраните в разделе «Память». Персона сохраняется отдельно и действует после перезапуска.','subtitle'))
@@ -149,18 +179,18 @@ class Views:
         body.addStretch(); return page_widget
 
     def memory_view(self):
-        self.memory_save_button=button('Сохранить параметры памяти и обучения',self.save_memory_settings,True)
+        self.memory_save_button=button('Сохранить настройки памяти',self.save_memory_settings,True)
         page_widget,body=page('Память','Посмотрите, какие сведения сохранены, кто их сообщил и к кому они относятся.',row(self.memory_save_button,None))
-        block,layout=card('Что слушать и сохранять')
+        block=Disclosure('Автоматическое запоминание');layout=block.body
         self.listen_conversation=QCheckBox('Учитывать разговор людей в голосовом канале')
         self.memory_auto_enabled=QCheckBox('Автоматически выделять и сохранять важные факты')
         self.learning_capture_enabled=QCheckBox('Собирать отфильтрованные примеры диалога и исправления')
         self.learning_auto_enabled=QCheckBox('Автоматически обучать веса LoRA во время простоя')
         for control in (self.listen_conversation,self.memory_auto_enabled,self.learning_capture_enabled,self.learning_auto_enabled):layout.addWidget(control)
         self.learning_capture_enabled.toggled.connect(self.learning_capture_changed)
-        layout.addWidget(label('Анализ разговора помогает сохранять контекст и факты; бот отвечает по режиму из «Голос и ответы». Факты сохраняются в постоянной памяти. Примеры могут подбираться к новым ответам — это адаптация по примерам, без изменения весов. Изменение весов требует отдельного тренера, достаточных данных и проверки кандидата; включённая галочка ещё не означает, что модель обучена. После изменения параметров перезапустите бота.','subtitle'))
+        layout.addWidget(label('Полезные сведения сохраняются автоматически. Когда отвечать — выбирается в настройках бота. Для изменения весов нужен отдельный тренер. После изменения этих параметров перезапусти бота.','subtitle'))
         body.addWidget(block)
-        block,layout=card('Добавить постоянную заметку')
+        block=Disclosure('Добавить запись вручную');layout=block.body
         self.memory_input=QLineEdit(); self.memory_input.setMaxLength(400); self.memory_input.setPlaceholderText('Например: по пятницам мы играем в шахматы')
         layout.addWidget(self.memory_input); layout.addWidget(row(button('Сохранить в память',self.add_memory,True),None))
         layout.addWidget(label('Заметка сохраняется для выбранного сервера и переживает перезапуск. Автор — владелец через панель. Для голоса: «Собеседник, запомни: …».','subtitle')); body.addWidget(block)
@@ -174,13 +204,14 @@ class Views:
         self.memory_table.setEditTriggers(QAbstractItemView.NoEditTriggers); self.memory_table.setAlternatingRowColors(True)
         self.memory_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.memory_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.Stretch)
-        self.memory_table.verticalHeader().hide(); self.memory_table.setMinimumHeight(300); layout.addWidget(self.memory_table)
+        self.memory_table.verticalHeader().hide(); self.memory_table.setMinimumHeight(220); layout.addWidget(self.memory_table)
         self.memory_count=label('Сохранённых записей пока нет','subtitle'); layout.addWidget(self.memory_count)
         layout.addWidget(row(button('История изменений',self.inspect_memory_history),button('Проверить поиск в памяти',self.check_memory_recall),None))
-        layout.addWidget(row(button('Удалить выбранную запись',self.delete_memory,danger=True),button('Забыть участника',self.forget_person,danger=True),None))
-        layout.addWidget(row(button('Очистить память сервера',self.clear_memory,danger=True),button('Очистить учебные примеры',self.clear_learning,danger=True),None))
-        body.addWidget(block)
-        block,layout=card('Что означает обучение')
+        layout.addWidget(row(button('Удалить выбранную запись',self.delete_memory,danger=True),None))
+        cleanup=Disclosure('Удалить сведения участника или очистить всё');layout.addWidget(cleanup)
+        cleanup.body.addWidget(row(button('Забыть участника',self.forget_person,danger=True),button('Очистить память сервера',self.clear_memory,danger=True),button('Очистить учебные примеры',self.clear_learning,danger=True),None))
+        body.insertWidget(0,block)
+        block=Disclosure('Дообучение модели — дополнительно');layout=block.body
         self.learning_label=label('Память сохраняет сведения сразу. Изменение весов — отдельное экспериментальное LoRA-обучение. Новые веса допускаются только после проверки качества; неудачные кандидаты отклоняются.','subtitle'); layout.addWidget(self.learning_label)
         layout.addWidget(label('Удаление учебного примера удаляет его из базы. Оно не стирает влияние примера из ранее обученных весов. Удаление памяти сервера также удаляет его учебные примеры.','subtitle'))
         self.learning_install=button('Настроить экспериментальное обучение',self.setup_learning)
@@ -188,8 +219,9 @@ class Views:
         body.addWidget(block); body.addStretch(); return page_widget
 
     def logs_view(self):
-        page_widget,body=page('Журнал и диагностика','Последние события с вашего компьютера. Перед копированием токен скрывается.')
+        page_widget,body=page('Диагностика','Посмотри, что бот услышал, и исправь неудачный ответ.')
         self.build_diagnostics(body)
-        self.log_edit=QPlainTextEdit(); self.log_edit.setReadOnly(True); self.log_edit.setMinimumHeight(440); body.addWidget(self.log_edit,1)
-        body.addWidget(row(button('Обновить',self.refresh_logs),button('Скопировать журнал',self.copy_logs),button('Открыть папку журналов',self.open_logs),None))
+        technical=Disclosure('Технический журнал');body.addWidget(technical)
+        self.log_edit=QPlainTextEdit(); self.log_edit.setReadOnly(True); self.log_edit.setMinimumHeight(360); technical.body.addWidget(self.log_edit,1)
+        technical.body.addWidget(row(button('Обновить',self.refresh_logs),button('Скопировать журнал',self.copy_logs),button('Открыть папку журналов',self.open_logs),None))
         return page_widget

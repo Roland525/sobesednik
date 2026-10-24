@@ -44,4 +44,9 @@ QCheckBox { spacing:10px; background:transparent; }
 QCheckBox::indicator { width:18px; height:18px; border:1px solid #5c728a; border-radius:4px; background:#131e2e; }
 QCheckBox::indicator:checked { background:#91e3bd; border-color:#a0efcc; }
 QToolTip { background:#26354b; color:#e6f5ed; border:1px solid #617991; padding:5px; }
+QToolButton#disclosure { background:#192230; border:1px solid #2b374a; border-radius:8px; padding:10px 15px; color:#b9c8dc; font-weight:600; }
+QToolButton#disclosure:hover { background:#243346; }
+QTabWidget::pane { border:none; }
+QTabBar::tab { background:#192230; color:#9aa9bd; padding:12px 24px; margin:0 7px 10px 0; border-bottom:2px solid transparent; }
+QTabBar::tab:selected { color:#b4ffdc; background:#263c38; border-bottom:2px solid #99edc7; }
 '''

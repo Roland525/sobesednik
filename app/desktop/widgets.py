@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor,QPainter,QPen
-from PySide6.QtWidgets import QFrame,QVBoxLayout,QLabel,QPushButton,QHBoxLayout,QWidget,QProgressBar
+from PySide6.QtWidgets import QFrame,QVBoxLayout,QLabel,QPushButton,QHBoxLayout,QWidget,QProgressBar,QToolButton
 
 
 def label(text, name=None, wrap=True):
@@ -31,6 +31,24 @@ def row(*items):
         if item is None: layout.addStretch()
         else: layout.addWidget(item)
     return widget
+
+
+class Disclosure(QWidget):
+    def __init__(self,title,expanded=False):
+        super().__init__()
+        layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(10)
+        self.toggle=QToolButton();self.toggle.setObjectName('disclosure');self.toggle.setText(title)
+        self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon);self.toggle.setCheckable(True)
+        self.toggle.setCursor(Qt.PointingHandCursor)
+        self.content=QWidget();self.body=QVBoxLayout(self.content);self.body.setContentsMargins(0,0,0,0);self.body.setSpacing(12)
+        layout.addWidget(self.toggle);layout.addWidget(self.content)
+        self.toggle.toggled.connect(self.setExpanded);self.setExpanded(expanded)
+
+    def isExpanded(self):return self.toggle.isChecked()
+
+    def setExpanded(self,expanded):
+        self.toggle.blockSignals(True);self.toggle.setChecked(expanded);self.toggle.blockSignals(False)
+        self.toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow);self.content.setVisible(expanded)
 
 
 class WaveMark(QWidget):

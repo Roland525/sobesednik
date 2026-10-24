@@ -60,6 +60,36 @@ class WindowTests(unittest.TestCase):
         self.window.save_persona()
         self.assertEqual(self.window.profile.persona(),'A test persona')
 
+    def test_home_name_save_updates_identity_and_addressing_together(self):
+        self.window.profile.save_persona('Existing persona')
+        self.window.bot_name_input.setText('Борис')
+        with patch.object(self.window.runtime,'running',return_value=False):self.window.save_identity()
+        cfg=self.window.profile.settings()
+        self.assertEqual(cfg['bot_name'],'Борис');self.assertEqual(cfg['wake_word'],'Борис')
+        self.assertEqual(self.window.profile.persona(),'Existing persona')
+        self.assertTrue(self.window.pages.widget(0).isAncestorOf(self.window.bot_name_input))
+
+    def test_restart_preserves_connected_voice_channel(self):
+        status={'guilds':[{'id':'1','connected_channel':'123'}]}
+        with patch.object(self.window.protocol,'status',return_value=status),patch.object(self.window.runtime,'stop') as stop,patch.object(self.window.runtime,'start') as start:
+            with patch.object(self.window,'run_job',side_effect=lambda work,done=None,**kwargs:work(None)):
+                self.window.restart_bot()
+        stop.assert_called_once();start.assert_called_once_with(resume_channel=123)
+
+    def test_everyday_settings_have_three_tabs_and_channel_is_on_home(self):
+        self.assertEqual([self.window.settings_tabs.tabText(i) for i in range(3)],['Голос','Модель','Общение'])
+        self.assertTrue(self.window.pages.widget(0).isAncestorOf(self.window.channel_box))
+        self.assertTrue(self.window.settings_tabs.widget(0).isAncestorOf(self.window.speed))
+        self.assertTrue(self.window.settings_tabs.widget(1).isAncestorOf(self.window.model_choice))
+        self.assertTrue(self.window.settings_tabs.widget(2).isAncestorOf(self.window.mode_choice))
+
+    def test_installed_maintenance_collapses_once_but_can_be_opened_by_user(self):
+        with patch.object(self.window.runtime,'installed',return_value=True):
+            self.window.reload_forms()
+            self.assertFalse(self.window.maintenance.isExpanded())
+            self.window.maintenance.setExpanded(True);self.window.reload_forms()
+            self.assertTrue(self.window.maintenance.isExpanded())
+
     def test_context_roundtrip_and_empty_memory(self):
         from desktop.app import context_text,parse_context
         messages=[{'role':'user','content':'Question\nmore details'},

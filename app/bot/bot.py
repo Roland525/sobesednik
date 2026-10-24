@@ -77,12 +77,8 @@ class DiscordBot(commands.Bot):
 
     async def on_ready(self):
         self.logger.info('Собеседник подключён к Discord; серверов: %d', len(self.guilds))
-        if self.user.name != self.config.bot_name:
-            try:
-                await self.user.edit(username=self.config.bot_name)
-                self.logger.info('Имя Discord-аккаунта изменено на %s', self.config.bot_name)
-            except discord.HTTPException:
-                self.logger.warning('Не удалось изменить глобальное имя; настрой его в Discord Developer Portal')
+        # The configurable name is the server nickname and voice identity.
+        # Global account renaming is separately managed in Developer Portal.
         for guild in self.guilds:
             await self.sync_guild(guild)
         if self.config.auto_join_channel_id:

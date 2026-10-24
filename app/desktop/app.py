@@ -83,7 +83,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
         side.addWidget(WaveMark()); side.addWidget(label('Собеседник','brand'))
         side.addWidget(label('ВАШ ГОЛОСОВОЙ ИИ','eyebrow'))
         self.navigation=QListWidget(); self.navigation.setObjectName('navigation')
-        self.navigation.addItems(['Обзор','Discord','Голос и ответы','Персона','Память','Журнал'])
+        self.navigation.addItems(['Главная','Подключение','Настройки бота','Характер','Память','Диагностика'])
         side.addWidget(self.navigation,1)
         side.addWidget(label('Локальные модели\nВаш компьютер. Ваши данные.','subtitle'))
         from .widgets import button
@@ -242,9 +242,14 @@ class MainWindow(QMainWindow,Views,QualityControls):
     def reload_forms(self):
         try:
             cfg=self.profile.settings()
+            installed=self.runtime.installed()
+            if installed!=self.last_install_state:
+                self.maintenance.setExpanded(not installed);self.last_install_state=installed
             self.populate_models(getattr(self,'installed_model_names',[]),cfg['ollama_model'])
             self.resource_slider.setValue(cfg.get('resource_level',70));self.resource_level_changed()
-            self.wake_input.setText(cfg['wake_word']); self.voice_choice.setCurrentText(cfg['tts_supertonic_voice'])
+            self.bot_name_input.setText(cfg['bot_name']); self.voice_choice.setCurrentText(cfg['tts_supertonic_voice'])
+            self.applied_identity=(cfg['bot_name'],cfg['wake_word'])
+            self.identity_status.setText('В голосе: «'+cfg['wake_word']+'». Ник на сервере: '+cfg['bot_name']+'.')
             self.speed.setValue(cfg['tts_speed']); self.volume.setValue(cfg['tts_volume'])
             self.length.setValue(cfg['max_response_chars']); self.history.setValue(cfg['history_turns'])
             index=self.mode_choice.findData(cfg['conversation_mode']); self.mode_choice.setCurrentIndex(max(0,index))
@@ -292,9 +297,11 @@ class MainWindow(QMainWindow,Views,QualityControls):
             self.channel_box.clear()
             for channel in channels: self.channel_box.addItem(channel['name'],channel['id'])
             index=self.channel_box.findData(previous); self.channel_box.setCurrentIndex(max(0,index))
-        connected=guild.get('connected_channel','')
+        connected=guild.get('connected_channel','') if self.state else ''
         channel=next((c['name'] for c in channels if c['id']==connected),'')
-        self.channel_status.setText('Сейчас в канале: '+channel if channel else 'Выберите канал и нажмите «Присоединиться».' if channels else 'Запустите бота; затем здесь появятся доступные каналы.')
+        self.channel_status.setText('Сначала нажми «Запустить бота», затем присоединись к каналу.' if not self.state
+            else 'Сейчас в канале: '+channel if channel else 'Выбери канал и нажми «Присоединиться».' if channels
+            else 'Доступных каналов пока нет. Проверь разрешения бота в Discord.')
         self.join_button.setEnabled(bool(channels) and bool(self.state) and not self.busy)
         self.leave_button.setEnabled(bool(connected) and not self.busy)
         if gid!=self.last_memory_guild:
@@ -320,8 +327,13 @@ class MainWindow(QMainWindow,Views,QualityControls):
         if self.runtime.installed():
             self.install_button.setText('Проверить / доустановить')
             if not self.busy: self.install_stage.setText('Основные компоненты установлены')
-            self.hero_title.setText('Собеседник на связи' if self.state else 'Можно запускать')
-            self.hero_detail.setText('Выберите канал в разделе Discord. Обращайтесь по имени — или продолжайте уже начатую тему.' if self.state else ('Модели и токен готовы. Нажмите «Запустить бота».' if self.token else 'Модели готовы. Укажите токен в разделе Discord и запустите бота.'))
+            self.hero_title.setText('Бот на связи' if self.state else 'Выполняем операцию…' if self.busy else 'Можно запускать')
+            self.hero_detail.setText('Выбери канал ниже и нажми «Присоединиться».' if self.state else ('Модели и токен готовы. Нажми «Запустить бота».' if self.token else 'Модели готовы. Добавь токен в разделе «Подключение».'))
+        guild=next((g for g in self.state.get('guilds',[]) if str(g['id'])==str(self.guild_id())),{})
+        if guild.get('bot_display_name'):
+            name,wake=self.applied_identity
+            self.identity_status.setText('Зови: «'+wake+', ты тут?» В Discord: '+guild['bot_display_name']+'.'+
+                (' Для изменения ника нужно разрешение «Изменять никнейм».' if guild['bot_display_name']!=name else ''))
         metrics=self.state.get('sessions',{}).get(str(self.guild_id()),{}).get('metrics',{})
         latency=metrics.get('first_playback_ms')
         if isinstance(latency,(int,float)): self.latency_card.update_value(f'{latency/1000:.1f} с','Последний ответ · не среднее')
@@ -345,10 +357,14 @@ class MainWindow(QMainWindow,Views,QualityControls):
     def start_bot(self): self.run_job(lambda _:self.runtime.start(),lambda _:self.notice('Запуск начался. Первичная загрузка моделей может занять до минуты.'))
     def stop_bot(self): self.run_job(lambda _:self.runtime.stop(),lambda _:self.notice('Бот остановлен.'))
     def restart_bot(self):
-        def restart(_): self.runtime.stop(); self.runtime.start()
+        def restart(_):
+            status=self.protocol.status()
+            channel=next((int(g['connected_channel']) for g in status.get('guilds',[]) if g.get('connected_channel')),0)
+            self.runtime.stop(); self.runtime.start(resume_channel=channel)
         self.run_job(restart,lambda _:self.notice('Бот перезапускается с сохранёнными настройками.'))
 
     def install_update(self,percent,title,line):
+        if title=='Автоподбор':self.tune_result.setPlainText(line);return
         if title in ('Обновление приложения','Установка обновления'):
             self.update_progress.setValue(percent); self.update_text.setText(line)
             if title=='Установка обновления': self.update_cancel.hide()
@@ -369,6 +385,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
     def install_components(self):
         if not self.payload.exists(): self.notice('Архив компонентов не найден. Используйте установочный EXE из GitHub Releases.'); return
         self.navigation.setCurrentRow(0)
+        self.maintenance.setExpanded(True)
         stt_model=self.stt_choice.currentData()
         def install(task):
             return Installer(self.profile.root,self.payload,task.progress.emit,self.cancel,self.runtime).run(stt_model)
@@ -386,7 +403,6 @@ class MainWindow(QMainWindow,Views,QualityControls):
                     item.casefold() for item in getattr(self,'installed_model_names',[])}:
                 raise ValueError('Сначала скачайте модель и обновите список.')
             self.profile.save_settings({'ollama_model':model,'response_profile':'custom','resource_level':self.resource_slider.value(),
-                'wake_word':self.wake_input.text().strip(),
                 'tts_supertonic_voice':self.voice_choice.currentText(),'tts_speed':self.speed.value(),
                 'tts_volume':self.volume.value(),'conversation_mode':self.mode_choice.currentData(),
                 'max_response_chars':self.length.value(),'history_turns':self.history.value(),
@@ -556,6 +572,20 @@ class MainWindow(QMainWindow,Views,QualityControls):
         try: self.profile.save_persona(self.persona_edit.toPlainText()); self.notice('Персона сохранена. Новые вопросы используют обновлённое описание.')
         except Exception as error: self.notice(str(error))
 
+    def save_identity(self):
+        try:
+            if self.busy:self.notice('Дождитесь текущей операции, затем примените имя.');return
+            name=self.bot_name_input.text().strip()
+            current=self.profile.settings()
+            if (current['bot_name'],current['wake_word'])==(name,name):
+                self.notice('Имя уже применено. Зови: «'+name+', ты тут?»');return
+            self.profile.save_settings({'bot_name':name,'wake_word':name})
+            self.applied_identity=(name,name)
+            self.identity_status.setText('Зови: «'+name+', ты тут?» Ник на сервере: '+name+'.')
+            self.notice('Имя сохранено. Обращайся: «'+name+', ты тут?»')
+            if self.runtime.running():self.restart_bot()
+        except Exception as error:self.notice(str(error))
+
     def check_token(self):
         token=self.token_input.text().strip() or self.token
         def check(_):
@@ -564,8 +594,8 @@ class MainWindow(QMainWindow,Views,QualityControls):
             self.account=account; self.token=token; self.token_input.clear()
             self.token_status.setText('Токен сохранён · бот '+account.get('username',''))
             self.notice('Токен проверен. Перезапустите бота для применения.' if self.runtime.running()
-                else ('Токен проверен. Пригласите бота на сервер и нажмите «Запустить бота» в Обзоре.'
-                      if self.runtime.installed() else 'Токен сохранён. Завершите установку компонентов в Обзоре — после этого появится кнопка запуска.'))
+                else ('Токен проверен. Пригласи бота на сервер и нажми «Запустить бота» на главной.'
+                      if self.runtime.installed() else 'Токен сохранён. Заверши установку компонентов на главной.'))
         self.run_job(check,done)
 
     def invite_bot(self):
@@ -714,7 +744,11 @@ class MainWindow(QMainWindow,Views,QualityControls):
             index=self.memory_table.rowCount(); self.memory_table.insertRow(index)
             for column,value in enumerate(values):
                 item=QTableWidgetItem(redact(str(value),self.token)); item.setToolTip(item.text()); self.memory_table.setItem(index,column,item)
-        self.memory_table.resizeRowsToContents(); self.memory_count.setText(f'Показано записей: {len(self.memory_data)} · максимум 2000')
+        self.memory_table.resizeRowsToContents()
+        empty={'notes':'Пока нет воспоминаний. Ниже можно включить автоматическое запоминание или добавить запись вручную.',
+               'people':'Участники появятся после подключения к голосовому каналу.',
+               'examples':'Учебных примеров пока нет. Этот список показывает сохранённые примеры, а не результат дообучения.'}
+        self.memory_count.setText('Записей: '+str(len(self.memory_data)) if self.memory_data else empty.get(kind,'Записей пока нет.'))
         self.filter_memory()
 
     def filter_memory(self,*args):
@@ -769,7 +803,8 @@ class MainWindow(QMainWindow,Views,QualityControls):
         def install(task):
             run_step(['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File','tools/setup_learning.ps1'],
                 self.profile.root,self.runtime.python,lambda line:task.progress.emit(0,'Обучение',line),self.cancel,14400)
-        self.navigation.setCurrentRow(0); self.run_job(install,lambda _:(self.reload_forms(),self.notice('Тренер установлен.')))
+        self.navigation.setCurrentRow(0);self.maintenance.setExpanded(True)
+        self.run_job(install,lambda _:(self.reload_forms(),self.notice('Тренер установлен.')))
         self.cancel_install.setEnabled(True)
 
     def refresh_logs(self): self.log_edit.setPlainText(self.profile.logs(self.token))
