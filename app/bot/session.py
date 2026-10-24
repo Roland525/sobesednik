@@ -664,8 +664,16 @@ class GuildSession:
                     if question.future and not question.future.done():
                         question.future.set_result('Серёга молчит. Для продолжения — /unmute или обращение по имени.')
                     continue
-                if (time.monotonic() - question.ended > min(8, self.config.max_audio_age)
+                # Native STT on CPU may take more than eight seconds. Its
+                # successful result is fresh work, not time spent waiting for
+                # another reply. Still bound both total age and reply backlog.
+                now = time.monotonic()
+                if ((now - question.ended > self.config.max_audio_age
+                     or now - question.enqueued_at > min(8, self.config.max_audio_age))
                     and (question.kind == 'voice' or self.rare_mode and question.kind == 'ambient')):
+                    self.journal.update(question.turn_id,status='ignored',reason='stale_audio')
+                    self.metrics.info('guild=%s reply_skipped=stale_audio age_ms=%.0f queue_ms=%.0f',
+                                      self.guild_id, (now-question.ended)*1000, (now-question.enqueued_at)*1000)
                     continue
                 if question.kind == 'ambient':
                     if self.quiet_mode:

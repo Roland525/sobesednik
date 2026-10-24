@@ -32,6 +32,20 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(self.window.pages.currentIndex(),index)
         self.assertEqual(self.window.token_input.echoMode(),QLineEdit.Password)
 
+    def test_invited_server_appears_while_voice_prepares_then_join_is_enabled(self):
+        state={'ready':True,'services_ready':False,'services_stage':'Загрузка распознавания речи',
+               'guilds':[{'id':'1','name':'New server','channels':[{'id':'2','name':'Voice'}]}]}
+        with patch.object(self.window.protocol,'status',return_value=state), \
+                patch.object(self.window.runtime,'running',return_value=True):
+            self.window.refresh()
+            self.assertEqual(self.window.guild_box.currentData(),'1')
+            self.assertEqual(self.window.channel_box.currentData(),'2')
+            self.assertFalse(self.window.join_button.isEnabled())
+            self.assertIn('Загрузка распознавания',self.window.channel_status.text())
+            state['services_ready']=True
+            self.window.refresh()
+            self.assertTrue(self.window.join_button.isEnabled())
+
     def test_diagnostics_show_heard_routing_and_attributed_evidence(self):
         self.window.guild_box.addItem('Test','1');self.window.guild_box.setCurrentIndex(1)
         self.window.state={'sessions':{str(self.window.guild_id()):{'turns':[{'id':'a','at':1,'name':'Tester',

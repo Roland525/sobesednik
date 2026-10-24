@@ -95,6 +95,9 @@ class DesktopControl:
                 'metrics':dict(session.last_metrics),'muted':getattr(session,'muted',False),
                 'turns':session.journal.snapshot()}
         return {'updated':time.time(),'pid':os.getpid(),'ready':self.bot.is_ready(),
+                'services_ready':getattr(self.bot,'services_ready',True),
+                'services_stage':getattr(self.bot,'services_stage',''),
+                'services_error':getattr(self.bot,'services_error',''),
                 'guilds':guilds,'sessions':sessions,'name':self.bot.config.bot_name,
                 'learning_maintenance':bool(self.bot.learning_request)}
 

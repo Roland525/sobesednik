@@ -44,6 +44,12 @@ class DiscordBot(commands.Bot):
         self.synced_guilds = set()
         self.monitor_task = None
         self.desktop_task = None
+        self.services_task = None
+        self.service_load_task = None
+        self.commands_task = None
+        self.services_ready = False
+        self.services_error = ''
+        self.services_stage = 'Подключение к Discord'
         self.voice_transitions = set()
         self.voice_recovery_tasks = {}
         self.disconnected_since = {}
@@ -63,17 +69,48 @@ class DiscordBot(commands.Bot):
         return self.sessions[guild_id]
 
     async def setup_hook(self):
+        # setup_hook runs BEFORE the gateway connection. Model loading and
+        # command registration must not delay guild events or the local panel.
+        self.services_task = asyncio.create_task(self.prepare_services(), name='voice-services')
+        self.commands_task = asyncio.create_task(self.sync_global_commands(), name='global-commands')
+        self.monitor_task = asyncio.create_task(self.monitor(), name='voice-monitor')
+        from .desktop_control import DesktopControl
+        self.desktop_task = asyncio.create_task(DesktopControl(self, ROOT).run(), name='desktop-control')
+
+    async def sync_global_commands(self):
+        await self.wait_until_ready()
+        try:
+            await self.tree.sync()
+        except Exception:
+            self.logger.exception('Не удалось зарегистрировать глобальные команды Discord')
+
+    async def prepare_services(self):
+        await self.wait_until_ready()
+        self.services_stage = 'Прогрев разговорной модели'
         try:
             await self.ollama_service.warmup()
             self.logger.info('Ollama прогрета: %s', self.config.ollama_model)
         except Exception:
             self.logger.exception('Ollama недоступна при старте; /status покажет состояние')
-        await asyncio.to_thread(self.audio_service.load)
-        await asyncio.to_thread(self.tts_service.load)
-        await self.tree.sync()
-        self.monitor_task = asyncio.create_task(self.monitor(), name='voice-monitor')
-        from .desktop_control import DesktopControl
-        self.desktop_task = asyncio.create_task(DesktopControl(self, ROOT).run(), name='desktop-control')
+        try:
+            self.services_stage = 'Загрузка распознавания речи'
+            await self.load_service(self.audio_service.load)
+            self.services_stage = 'Загрузка голоса'
+            await self.load_service(self.tts_service.load)
+        except Exception as error:
+            self.services_error = type(error).__name__
+            self.services_stage = 'Не удалось подготовить голос. Откройте журнал и перезапустите бота.'
+            self.logger.exception('Не удалось подготовить голосовые компоненты')
+            return
+        self.services_ready = True
+        self.services_stage = 'Голос готов'
+        self.logger.info('Голосовые компоненты готовы')
+
+    async def load_service(self, load):
+        # Cancelling an asyncio waiter does not stop a native loader thread.
+        # Keep ownership until close(), before tearing down the services.
+        self.service_load_task = asyncio.create_task(asyncio.to_thread(load))
+        await asyncio.shield(self.service_load_task)
 
     async def on_ready(self):
         self.logger.info('Собеседник подключён к Discord; серверов: %d', len(self.guilds))
@@ -82,6 +119,9 @@ class DiscordBot(commands.Bot):
         for guild in self.guilds:
             await self.sync_guild(guild)
         if self.config.auto_join_channel_id:
+            await self.services_task
+            if not self.services_ready:
+                return
             channel = self.get_channel(self.config.auto_join_channel_id)
             if isinstance(channel, discord.VoiceChannel) and not channel.guild.voice_client:
                 try:
@@ -89,6 +129,9 @@ class DiscordBot(commands.Bot):
                 except Exception:
                     self.logger.exception('Не удалось выполнить auto_join')
         if self.voice_smoke_requested:
+            await self.services_task
+            if not self.services_ready:
+                return
             self.voice_smoke_requested = False
             asyncio.create_task(self.voice_smoke(), name='voice-smoke')
 
@@ -157,6 +200,8 @@ class DiscordBot(commands.Bot):
         await self.sync_guild(guild)
 
     async def join_channel(self, channel, user_id=None):
+        if not getattr(self, 'services_ready', True):
+            raise commands.CheckFailure(self.services_stage + '. Дождитесь готовности или проверьте журнал.')
         lock = self.guild_locks.setdefault(channel.guild.id, asyncio.Lock())
         async with lock:
             if self.shutting_down or self.learning_request:
@@ -490,6 +535,13 @@ class DiscordBot(commands.Bot):
             await asyncio.sleep(5)
 
     async def close(self):
+        self.shutting_down = True
+        startup_tasks = [task for task in (self.services_task, self.commands_task) if task]
+        for task in startup_tasks:
+            task.cancel()
+        await asyncio.gather(*startup_tasks, return_exceptions=True)
+        if self.service_load_task:
+            await asyncio.gather(self.service_load_task, return_exceptions=True)
         if self.desktop_task:
             self.desktop_task.cancel()
             await asyncio.gather(self.desktop_task, return_exceptions=True)

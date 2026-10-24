@@ -303,6 +303,9 @@ class MainWindow(QMainWindow,Views,QualityControls):
             else 'Сейчас в канале: '+channel if channel else 'Выбери канал и нажми «Присоединиться».' if channels
             else 'Доступных каналов пока нет. Проверь разрешения бота в Discord.')
         self.join_button.setEnabled(bool(channels) and bool(self.state) and not self.busy)
+        if self.state and not self.state.get('services_ready',True):
+            self.channel_status.setText(self.state.get('services_stage') or 'Готовим голосовые компоненты…')
+            self.join_button.setEnabled(False)
         self.leave_button.setEnabled(bool(connected) and not self.busy)
         if gid!=self.last_memory_guild:
             self.last_memory_guild=gid; self.refresh_memory()
@@ -312,6 +315,8 @@ class MainWindow(QMainWindow,Views,QualityControls):
         self.refresh_errand()
         if self.pages.currentIndex()==5:self.refresh_diagnostics()
         self.status_label.setText('В Discord' if self.state.get('ready') else 'Подключается…' if running else 'Остановлен')
+        if self.state.get('ready') and not self.state.get('services_ready',True):
+            self.status_label.setText('Ошибка подготовки голоса' if self.state.get('services_error') else 'В Discord · готовим голос…')
         self.start_button.setEnabled(not running and not self.busy and self.runtime.installed())
         self.stop_button.setEnabled(running and not self.busy)
         self.restart_button.setEnabled(running and not self.busy)
@@ -329,6 +334,8 @@ class MainWindow(QMainWindow,Views,QualityControls):
             if not self.busy: self.install_stage.setText('Основные компоненты установлены')
             self.hero_title.setText('Бот на связи' if self.state else 'Выполняем операцию…' if self.busy else 'Можно запускать')
             self.hero_detail.setText('Выбери канал ниже и нажми «Присоединиться».' if self.state else ('Модели и токен готовы. Нажми «Запустить бота».' if self.token else 'Модели готовы. Добавь токен в разделе «Подключение».'))
+            if self.state and not self.state.get('services_ready',True):
+                self.hero_detail.setText(self.state.get('services_stage') or 'Готовим голосовые компоненты…')
         guild=next((g for g in self.state.get('guilds',[]) if str(g['id'])==str(self.guild_id())),{})
         if guild.get('bot_display_name'):
             name,wake=self.applied_identity

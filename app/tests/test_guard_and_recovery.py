@@ -226,6 +226,8 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from bot.bot import DiscordBot
         self.bot = DiscordBot(Config(memory_enabled=False), logging.getLogger(), logging.getLogger())
+        # These voice-recovery tests use already loaded fake voice services.
+        self.bot.services_ready = True
         self.guild = SimpleNamespace(id=1, voice_client=None, me=SimpleNamespace(voice=SimpleNamespace(channel=None)))
         self.channels = []
         for cid in (11, 22, 33):
