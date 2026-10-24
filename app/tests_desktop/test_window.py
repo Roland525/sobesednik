@@ -32,6 +32,17 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(self.window.pages.currentIndex(),index)
         self.assertEqual(self.window.token_input.echoMode(),QLineEdit.Password)
 
+    def test_diagnostics_show_heard_routing_and_attributed_evidence(self):
+        self.window.guild_box.addItem('Test','1');self.window.guild_box.setCurrentIndex(1)
+        self.window.state={'sessions':{str(self.window.guild_id()):{'turns':[{'id':'a','at':1,'name':'Tester',
+            'heard':'Synthetic question','reason':'named','status':'answered','answer':'Synthetic answer',
+            'memories':[{'content':'Synthetic fact','source':'Tester'}]}]}}}
+        self.window.refresh_diagnostics()
+        self.assertEqual(self.window.turn_table.rowCount(),1)
+        self.assertIn('Synthetic question',self.window.turn_detail.toPlainText())
+        self.assertIn('Обращение по имени',self.window.turn_detail.toPlainText())
+        self.assertIn('Synthetic fact — Tester',self.window.turn_detail.toPlainText())
+
     def test_settings_and_persona_save_to_selected_profile(self):
         self.window.speed.setValue(1.12)
         self.window.save_settings()

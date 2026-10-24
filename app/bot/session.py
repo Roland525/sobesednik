@@ -15,7 +15,7 @@ from .controls import voice_control, addresses_someone_else, screen_request, SCR
 from .security import private_request_reply, computer_action_reply, safe_output
 from .factuality import freshness_reply
 from .services.dota_patch_source import DotaPatchSource
-from .diagnostics import TurnTrace
+from .diagnostics import TurnTrace,TurnJournal,memory_evidence
 from .memory import MEMORY_OPERATION, memory_request
 from .voice.lifecycle import close_voice_client
 
@@ -47,6 +47,8 @@ class Question:
     kind: str = 'voice'
     future: object = None
     enqueued_at: float = field(default_factory=time.monotonic)
+    turn_id: str = ''
+    route_reason: str = ''
 
 
 class GuildSession:
@@ -66,6 +68,7 @@ class GuildSession:
         self.channel_conversation = Conversation(config)
         self.dota_patches = DotaPatchSource(logger)
         self.trace = TurnTrace(config)
+        self.journal=TurnJournal(secrets=(config.discord_token,))
         self.audio_queue = asyncio.Queue(maxsize=config.max_audio_queue_size)
         self.control_queue = asyncio.Queue(maxsize=1)
         self.questions = asyncio.PriorityQueue(maxsize=config.max_audio_queue_size)
@@ -213,10 +216,12 @@ class GuildSession:
                     continue
                 hit, _ = addressed(text, self.config.wake_word)
                 control = voice_control(text, self.config.wake_word, self.muted)
+                turn_id=self.journal.heard(uid,utterance.member.display_name,text,'named' if hit else 'background')
                 self.trace.record('heard', user=uid, text=text[:800], named=hit, control=control,
                                   echo=self.is_echo(text, utterance), duration=round(utterance.ended-utterance.started, 2))
                 if control == 'mute':
                     await self.hush()
+                    self.journal.update(turn_id,reason='hush',status='stopped')
                     continue
                 if control == 'unmute':
                     if not hit:
@@ -229,6 +234,7 @@ class GuildSession:
                     continue
                 if self.is_echo(text, utterance):
                     self.guard_counts['echo'] += 1
+                    self.journal.update(turn_id,reason='echo',status='ignored')
                     continue
                 normalized = re.sub(r'\W', '', text.lower().replace('ё', 'е'))
                 now = time.monotonic()
@@ -236,6 +242,7 @@ class GuildSession:
                 previous = self.recent_inputs.get(uid)
                 if not hit and previous and previous[0] == normalized:
                     self.guard_counts['duplicate'] += 1
+                    self.journal.update(turn_id,reason='duplicate',status='ignored')
                     continue
                 self.recent_inputs[uid] = (normalized, now)
                 notice=''
@@ -314,7 +321,8 @@ class GuildSession:
                         if not self.closed:
                             self.response_task = asyncio.create_task(self.respond(), name=f'reply-{self.guild_id}')
                     self.metrics.info('guild=%s turn=direct named=%s chars=%s', self.guild_id, hit, len(question))
-                    await self.submit_direct(Question(uid, utterance.member.display_name, question, utterance.ended, timings))
+                    await self.submit_direct(Question(uid, utterance.member.display_name, question, utterance.ended, timings,
+                        turn_id=turn_id,route_reason='named' if hit else 'clarification' if memory_answer else 'followup'))
                 elif self.participant_mode and not self.quiet_mode:
                     if self.rare_mode:
                         if not self.rare_candidate(text, now, names):
@@ -471,6 +479,9 @@ class GuildSession:
         self.enqueue(question)
 
     def enqueue(self, question):
+        if not question.turn_id:
+            question.turn_id=self.journal.heard(question.user_id,question.name,question.text,question.route_reason or question.kind)
+        self.journal.update(question.turn_id,status='queued',reason=question.route_reason or question.kind)
         self.trace.record('queued', user=question.user_id, kind=question.kind, text=question.text[:800])
         self.start()
         if question.kind == 'voice':
@@ -589,9 +600,11 @@ class GuildSession:
             self.current_kind = pending_kind
             self.responding = True
             try:
+                self.journal.update(question.turn_id,status='working')
                 if question.future and question.future.cancelled():
                     continue
                 if self.muted and question.kind != 'text':
+                    self.journal.update(question.turn_id,status='ignored',reason='muted')
                     if question.future and not question.future.done():
                         question.future.set_result('Серёга молчит. Для продолжения — /unmute или обращение по имени.')
                     continue
@@ -635,6 +648,7 @@ class GuildSession:
                     # The stored record is retrieved separately as bounded data.
                     # Do not keep raw memory instructions in conversational history.
                     messages[-1] = {'role': 'user', 'content': MEMORY_OPERATION}
+                self.journal.update(question.turn_id,memories=memory_evidence(messages))
                 fixed_reply = (route.reply if route else '') or memory_reply or private_request_reply(question.text) or computer_action_reply(question.text)
                 fresh_reply = freshness_reply(question.text)
                 if not fixed_reply and fresh_reply:
@@ -703,17 +717,20 @@ class GuildSession:
                 if question.kind != 'say':
                     self.conversation.replied_to(question.user_id)
                 self.last_metrics = dict(question.timings)
+                self.journal.update(question.turn_id,answer=response,status='answered',timings=dict(question.timings))
                 self.metrics.info('guild=%s %s', self.guild_id, {key: round(value, 1) for key, value in question.timings.items()})
                 if question.future and not question.future.done():
                     question.future.set_result(response)
                 if route and route.job:
                     self.voice_routes.start(route.job)
             except asyncio.CancelledError:
+                self.journal.update(question.turn_id,status='stopped')
                 if question.future and not question.future.done():
                     question.future.cancel()
                 raise
             except Exception as exc:
                 self.last_error = type(exc).__name__
+                self.journal.update(question.turn_id,status='error',error=type(exc).__name__)
                 self.logger.exception('Ошибка ответа guild=%s', self.guild_id)
                 if question.future and not question.future.done():
                     question.future.set_exception(RuntimeError('Локальная модель недоступна. Проверь /status.'))
@@ -790,6 +807,7 @@ class GuildSession:
                 q.task_done()
         if clear_context:
             self.clear_observations()
+            self.journal.clear()
             if self.memory:
                 self.memory.cancel_pending(self.guild_id)
             self.conversation.reset()

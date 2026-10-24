@@ -185,6 +185,7 @@ class Views:
 
     def logs_view(self):
         page_widget,body=page('Журнал и диагностика','Последние события с вашего компьютера. Перед копированием токен скрывается.')
+        self.build_diagnostics(body)
         self.log_edit=QPlainTextEdit(); self.log_edit.setReadOnly(True); self.log_edit.setMinimumHeight(440); body.addWidget(self.log_edit,1)
         body.addWidget(row(button('Обновить',self.refresh_logs),button('Скопировать журнал',self.copy_logs),button('Открыть папку журналов',self.open_logs),None))
         return page_widget

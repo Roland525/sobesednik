@@ -73,7 +73,8 @@ class DesktopControl:
         for gid,session in self.bot.sessions.items():
             sessions[str(gid)]={'context':[{'role':m['role'],'content':redact(m['content'],token)}
                 for m in list(session.conversation.history)[-60:]],
-                'metrics':dict(session.last_metrics),'muted':getattr(session,'muted',False)}
+                'metrics':dict(session.last_metrics),'muted':getattr(session,'muted',False),
+                'turns':session.journal.snapshot()}
         return {'updated':time.time(),'pid':os.getpid(),'ready':self.bot.is_ready(),
                 'guilds':guilds,'sessions':sessions,'name':self.bot.config.bot_name,
                 'learning_maintenance':bool(self.bot.learning_request)}

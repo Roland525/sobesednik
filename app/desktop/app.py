@@ -19,6 +19,7 @@ from .runtime import Runtime,run_step,sample_resources
 from .storage import Profile,default_root,install_payload,atomic_json,redact
 from .style import STYLE
 from .views import Views
+from .quality import QualityControls
 from .widgets import label,row,WaveMark
 from .version import VERSION
 
@@ -57,7 +58,7 @@ class Task(QThread):
         except Exception as error: self.error.emit(redact(str(error),self.token))
 
 
-class MainWindow(QMainWindow,Views):
+class MainWindow(QMainWindow,Views,QualityControls):
     def __init__(self,root,start_timers=True):
         super().__init__(); self.profile=Profile(root)
         self.profile_lock=self.acquire_lock(self.profile.root)
@@ -300,6 +301,7 @@ class MainWindow(QMainWindow,Views):
 
     def refresh(self):
         self.state=self.protocol.status(); running=self.runtime.running()
+        if self.pages.currentIndex()==5:self.refresh_diagnostics()
         self.status_label.setText('В Discord' if self.state.get('ready') else 'Подключается…' if running else 'Остановлен')
         self.start_button.setEnabled(not running and not self.busy and self.runtime.installed())
         self.stop_button.setEnabled(running and not self.busy)
