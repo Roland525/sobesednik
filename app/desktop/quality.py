@@ -10,6 +10,8 @@ REASONS={'named':'Обращение по имени','followup':'Продолж
          'hush':'Команда остановить речь','echo':'Похоже на эхо бота','duplicate':'Повтор той же фразы',
          'muted':'Речь остановлена','ambient':'Кандидат на редкое дополнение',
          'text':'Текстовый вопрос','voice':'Голосовой вопрос','say':'Служебная реплика'}
+STATUSES={'heard':'Услышал','queued':'В очереди','working':'Готовлю ответ','answered':'Ответил',
+          'ignored':'Пропущено','stopped':'Остановлен','waiting_for_speaker':'Ждёт окончания фразы','error':'Ошибка'}
 
 
 class QualityControls:
@@ -153,7 +155,7 @@ class QualityControls:
         index=0
         for i,turn in enumerate(rows):
             self.turn_table.insertRow(i)
-            values=[time.strftime('%H:%M:%S',time.localtime(turn.get('at',0))),turn.get('name',''),turn.get('heard',''),turn.get('status','')]
+            values=[time.strftime('%H:%M:%S',time.localtime(turn.get('at',0))),turn.get('name',''),turn.get('heard',''),STATUSES.get(turn.get('status'),turn.get('status',''))]
             for col,value in enumerate(values):self.turn_table.setItem(i,col,QTableWidgetItem(str(value)))
             if turn.get('id')==rid:index=i
         if rows:self.turn_table.selectRow(index)
@@ -166,4 +168,4 @@ class QualityControls:
         timings=' · '.join(k+': '+str(round(v))+' мс' for k,v in turn.get('timings',{}).items() if isinstance(v,(int,float)) and k.endswith('_ms'))
         self.turn_detail.setPlainText('Услышал: '+turn.get('heard','')+'\n\nПричина: '+REASONS.get(turn.get('reason'),turn.get('reason',''))+
             '\n\nОтвет: '+(turn.get('answer') or 'Ответа пока нет / реплика оставлена без ответа.')+
-            '\n\nПередано из памяти (это не доказательство использования каждого факта):\n'+memories+'\n\n'+timings)
+            '\n\nСведения из памяти, переданные модели:\n'+memories+'\n\n'+timings)

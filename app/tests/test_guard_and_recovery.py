@@ -204,6 +204,7 @@ class GuardAsyncTests(unittest.IsolatedAsyncioTestCase):
             session.audio_queue.put_nowait(Utterance(member, b'a', now, now, now, 0))
         try:
             session.conversation.replied_to(1)
+            session.conversation.history.append({'role':'assistant','content':'Тебе тоже нравится эта игра?'})
             feed()
             await session.audio_queue.join()
             self.assertEqual(captured[-1].kind, 'voice')

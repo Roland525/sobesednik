@@ -61,3 +61,19 @@ class TurnTakingTests(unittest.IsolatedAsyncioTestCase):
         self.session.conversation.replied_to(1)
         await self.hear(1,'Паша, а почему вечером красное?')
         self.assertEqual(len(self.captured),1)
+
+    async def test_participant_mode_does_not_answer_unrelated_owner_statement(self):
+        self.session.require_wake_each_turn=False;self.session.participant_mode=True
+        await self.hear(1,'Серёга, почему небо голубое?')
+        self.session.conversation.history.append({'role':'assistant','content':'Из-за рассеяния света.'})
+        self.session.conversation.replied_to(1)
+        await self.hear(1,'Я пошёл за водой')
+        self.assertEqual(len(self.captured),1)
+
+    async def test_owner_followup_reaches_stt_with_general_listening_disabled(self):
+        self.session.config.listen_conversation=False
+        await self.hear(1,'Серёга, почему небо голубое?')
+        self.session.conversation.history.append({'role':'assistant','content':'Из-за рассеяния света.'})
+        self.session.conversation.replied_to(1)
+        await self.hear(1,'А почему вечером красное?')
+        self.assertTrue(self.stt.transcribe.call_args.kwargs['active'])

@@ -23,6 +23,16 @@ class FeedbackTests(unittest.TestCase):
         record=self.store.add(1,self.turn,'question','Сколько будет три плюс три?')
         self.assertEqual(self.store.cases(1),[])
         self.assertEqual(record['invalidated']['answer'],'Четыре.')
+
+    def test_replacement_answer_invalidates_previous_training_target(self):
+        self.store.add(1,self.turn,'answer','Первое исправление')
+        record=self.store.add(1,self.turn,'answer','Второе исправление')
+        self.assertEqual(record['invalidated']['answer'],'Первое исправление')
+        self.assertEqual(len(self.store.cases(1)),1)
+
+    def test_third_party_personal_facts_cannot_become_weight_training_cases(self):
+        row=self.store.add(1,{**self.turn,'heard':'Сколько лет Паше?'},'answer','Паше 32 года.')
+        self.assertFalse(row['trainable']);self.assertEqual(self.store.cases(1),[])
     def test_empty_secret_and_memory_dependent_cases_cannot_train_weights(self):
         for value in ['', 'private-key']:
             with self.assertRaises(ValueError):self.store.add(1,self.turn,'answer',value)
@@ -40,6 +50,16 @@ class FeedbackTests(unittest.TestCase):
         self.store.add(1,self.turn,'answer','Четыре.')
         with self.store.db:purge_feedback(self.store.db,1,2)
         self.assertEqual(self.store.cases(1),[])
+
+    def test_feedback_only_database_can_be_browsed_and_cleared_with_capture_disabled(self):
+        from desktop.storage import Profile
+        root=Path(self.temp.name)/'profile';profile=Profile(root)
+        store=FeedbackStore(root/'data/learning.sqlite3');store.add(1,self.turn,'answer','Четыре');store.close()
+        self.assertEqual(profile.memory_rows('examples',1),[])
+        profile.mutate_memory('learning_clear',{'guild':1})
+        store=FeedbackStore(root/'data/learning.sqlite3')
+        try:self.assertEqual(store.cases(1),[])
+        finally:store.close()
 
 class FeedbackDispatchTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_or_cross_server_turn_cannot_be_corrected(self):

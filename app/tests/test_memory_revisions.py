@@ -24,3 +24,17 @@ class MemoryRevisionTests(unittest.TestCase):
     def test_repeated_same_fact_does_not_create_history(self):
         for _ in range(3):self.store.observe_auto(1,2,'Tester','Я работаю дизайнером')
         self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM note_history').fetchone()[0],0)
+
+    def test_voice_forget_clears_feedback_even_when_capture_service_is_disabled(self):
+        import logging,time
+        from bot.feedback import FeedbackStore
+        from bot.session import GuildSession,Question
+        from bot.config import Config
+        corpus=FeedbackStore(Path(self.temp.name)/'learning.sqlite3')
+        turn={'id':'a'*32,'user_id':2,'heard':'Сколько два плюс два?','answer':'Пять','memories':[]}
+        corpus.add(1,turn,'answer','Четыре');corpus.close()
+        session=GuildSession(1,Config(learning_capture_enabled=False),None,None,None,logging.getLogger(),logging.getLogger(),self.store)
+        self.assertIn('Удалил',session.memory_turn(Question(2,'Tester','Забудь всё обо мне',time.monotonic()))[0])
+        corpus=FeedbackStore(Path(self.temp.name)/'learning.sqlite3')
+        try:self.assertEqual(corpus.cases(1),[])
+        finally:corpus.close()

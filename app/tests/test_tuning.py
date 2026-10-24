@@ -27,3 +27,11 @@ class TuningTests(unittest.TestCase):
             with patch('desktop.tuning.run_step'):
                 self.assertTrue(run_tuning(root,[],threading.Event(),lambda _:None)['complete'])
             self.assertEqual(before,(root/'config.json').read_bytes())
+
+    def test_cancel_also_unloads_candidate_from_external_ollama_server(self):
+        from desktop.tuning import run_tuning
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            with patch('desktop.tuning.run_step',side_effect=InterruptedError),patch('desktop.tuning.release_candidates') as release:
+                with self.assertRaises(InterruptedError):run_tuning(root,[{'model':'local'}],threading.Event(),lambda _:None)
+                release.assert_called_once()

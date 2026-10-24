@@ -3,11 +3,24 @@ from pathlib import Path
 from .runtime import run_step
 
 
+def release_candidates(candidates):
+    from .models import request
+    names={c['model'].casefold() for c in candidates}
+    try:
+        with request('http://127.0.0.1:11434','/api/ps',timeout=2) as response:loaded=json.load(response).get('models',[])
+        for item in loaded:
+            if item.get('name','').casefold() in names:
+                with request('http://127.0.0.1:11434','/api/generate',{'model':item['name'],'keep_alive':0},timeout=5):pass
+    except (OSError,ValueError):pass
+
+
 def run_tuning(root,candidates,cancel,progress,script=None):
     root=Path(root);output=root/'reports/hardware-tuning.json'
     script=Path(script) if script else root/'tools/tune_runtime.py'
-    run_step([root/'.venv/Scripts/python.exe',script,'--root',root,'--output',output,
-              '--candidates',json.dumps(candidates)],root,root/'.venv/Scripts/python.exe',progress,cancel,1800)
+    try:
+        run_step([root/'.venv/Scripts/python.exe',script,'--root',root,'--output',output,
+                  '--candidates',json.dumps(candidates)],root,root/'.venv/Scripts/python.exe',progress,cancel,1800)
+    finally:release_candidates(candidates)
     report=json.loads(output.read_text(encoding='utf-8-sig'))
     if not report.get('complete'):raise RuntimeError('Сравнение не завершено; рекомендация не применяется.')
     return report

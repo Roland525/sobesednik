@@ -7,6 +7,8 @@
   "memory_enabled": true,
   "memory_auto_enabled": true,
   "listen_conversation": true,
+  "followup_enabled": true,
+  "interrupt_enabled": true,
   "learning_capture_enabled": true,
   "learning_auto_enabled": false,
   "ollama_host": "http://127.0.0.1:11434",

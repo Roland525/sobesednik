@@ -209,8 +209,10 @@ class GuildSession:
                     continue
                 uid = utterance.member.id
                 generation = self.generation
-                active = self.muted or (not self.require_wake_each_turn and
-                                       (self.conversation.follows_up(uid) or self.responding))
+                owner_followup=(self.config.followup_enabled and self.dialogue_owner in (None,uid)
+                                and self.conversation.follows_up(uid))
+                unfinished=self.current_question or self.deferred_question
+                active = self.muted or owner_followup or bool(unfinished and unfinished.user_id==uid)
                 start = time.monotonic()
                 text = await self.stt.transcribe(utterance.pcm, active=active or self.participant_mode or self.trace.active or self.config.listen_conversation)
                 if generation != self.generation:
@@ -320,7 +322,7 @@ class GuildSession:
                         self.logger.warning('Не удалось проверить уточнение памяти: %s', type(error).__name__)
                 followup = (eligible_followup
                             and (memory_answer or not addresses_someone_else(text, names, self.config.wake_word)))
-                if followup and not hit and (self.rare_mode or not self.participant_mode):
+                if followup and not hit:
                     greeting = re.fullmatch(r'(?:привет|здравствуй|здравствуйте)[.! ]*', text.lower())
                     waiting = self.awaiting_question == uid and (greeting or likely_followup(text, self.conversation.history))
                     followup = waiting or memory_answer or likely_followup(text, self.conversation.history)
@@ -345,6 +347,10 @@ class GuildSession:
                     self.metrics.info('guild=%s turn=direct named=%s chars=%s', self.guild_id, hit, len(question))
                     await self.submit_direct(Question(uid, utterance.member.display_name, question, utterance.ended, timings,
                         turn_id=turn_id,route_reason='named' if hit else 'clarification' if memory_answer else 'followup'))
+                elif eligible_followup and not followup and not self.rare_mode:
+                    # An unrelated aside during a reply window is context,
+                    # not a second route around the followup decision.
+                    self.observe_ambient(uid,utterance.member.display_name,text)
                 elif self.participant_mode and not self.quiet_mode:
                     if self.rare_mode:
                         if not self.rare_candidate(text, now, names):
@@ -415,15 +421,26 @@ class GuildSession:
         self.memory_epoch+=1
         self.heard_context.clear()
         self.pending_memory.clear()
+        self.journal.clear()
         if self.memory_analysis and not self.memory_analysis.done(): self.memory_analysis.cancel()
+
+    def forget_learning(self,uid):
+        if self.learning:self.learning.forget(self.guild_id,uid);return
+        from .learning import LearningCorpus
+        path=self.memory.path.parent/'learning.sqlite3' if self.memory else self.config.path('data/learning.sqlite3')
+        if path.exists():
+            corpus=LearningCorpus(path)
+            try:corpus.forget(self.guild_id,uid)
+            finally:corpus.close()
 
     def memory_turn(self, question):
         if question.kind not in ('voice', 'text'):
             return '', ''
         if not self.memory:
-            if self.learning and re.fullmatch(r'(?:забудь (?:вс[её] )?обо мне|удали память обо мне|забудь вс[её])\s*[.!?]*', question.text, re.I):
-                self.learning.forget(self.guild_id, question.user_id)
+            if re.fullmatch(r'(?:забудь (?:вс[её] )?обо мне|удали память обо мне|забудь вс[её])\s*[.!?]*', question.text, re.I):
+                self.forget_learning(question.user_id)
                 self.clear_observations()
+                self.conversation.history.clear();self.channel_conversation.history.clear();self.ambient_context.clear()
                 return 'Удалил связанные с тобой учебные примеры. Уже обученную версию потребуется переобучить.', ''
             if memory_request(question.text) is not None or re.match(r'^забудь\b', question.text, re.I):
                 return 'Постоянная память сейчас недоступна.' if self.config.memory_enabled else 'Постоянная память выключена.', ''
@@ -433,8 +450,7 @@ class GuildSession:
             result = self.memory.handle(self.guild_id, question.user_id, question.name, question.text)
             if result.forget:
                 self.clear_observations()
-                if self.learning:
-                    self.learning.forget(self.guild_id, question.user_id)
+                self.forget_learning(question.user_id)
                 self.conversation.history.clear()
                 self.channel_conversation.history.clear()
                 self.ambient_context.clear()
@@ -505,7 +521,7 @@ class GuildSession:
     def enqueue(self, question):
         if not question.turn_id:
             question.turn_id=self.journal.heard(question.user_id,question.name,question.text,question.route_reason or question.kind)
-        self.journal.update(question.turn_id,status='queued',reason=question.route_reason or question.kind)
+        self.journal.update(question.turn_id,status='queued',reason=question.route_reason or question.kind,question=question.text)
         self.trace.record('queued', user=question.user_id, kind=question.kind, text=question.text[:800])
         self.start()
         if question.kind == 'voice':

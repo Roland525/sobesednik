@@ -15,13 +15,24 @@ def purge_feedback(db,guild,uid=None):
 
 def general_example(question,answer,memories):
     from .learning import LearningCorpus
+    from .memory import _ALIASES
     cleaner=object.__new__(LearningCorpus);cleaner.secrets=()
+    text=question+' '+answer
+    # Conservative exclusion: personal facts stay attributed in memory, never
+    # become an anonymous answer target for everyone on the server.
+    if re.search(r'сколько\s+лет|возраст|день\s+рожд|зарплат|диагноз|телефон|адрес|'
+                 r'\b(?:любит|ненавидит|жив[её]т|работает|зовут|предпочитает)\b',text,re.I):return False
+    if any(word.casefold().replace('ё','е') in _ALIASES for word in re.findall(r'\w+',text)):return False
     return (not memories and bool(cleaner.clean(question) and cleaner.clean(answer)) and not re.search(
         r'\b(?:я|меня|мне|мой|моя|моё|мои|мы|нас|наш|наша|ты|тебя|тебе|твой|зовут|живёт|живет|работает)\b',question+' '+answer,re.I))
 
 
 class FeedbackStore:
     def __init__(self,path,secrets=()):
+        # Capture may be disabled: still initialize the shared corpus schema so
+        # its existing desktop browse/clear operations remain valid.
+        from .learning import LearningCorpus
+        corpus=LearningCorpus(path,secrets);corpus.close()
         path.parent.mkdir(parents=True,exist_ok=True);self.db=sqlite3.connect(path,timeout=2)
         self.db.row_factory=sqlite3.Row;self.secrets=secrets
         self.db.executescript('''CREATE TABLE IF NOT EXISTS feedback (
@@ -40,15 +51,15 @@ class FeedbackStore:
             raise ValueError('Исправление: 1–1200 символов, без секретов')
         if not turn.get('user_id') or not re.fullmatch(r'[a-f0-9]{32}',turn.get('id','')):
             raise ValueError('Выберите реплику человека из текущего разговора')
-        question=addressed(turn['heard'],wake_word)[1]
+        question=addressed(turn.get('question') or turn['heard'],wake_word)[1]
         previous=self.db.execute("SELECT question FROM feedback WHERE guild=? AND turn_id=? AND kind='question'",(guild,turn['id'])).fetchone()
         if previous:question=previous['question']
         if kind=='question':question=correction
         answer=correction if kind=='answer' else ''
         trainable=kind=='answer' and general_example(question,answer,turn.get('memories'))
-        invalidated=self.db.execute("SELECT * FROM feedback WHERE guild=? AND turn_id=? AND kind='answer'",(guild,turn['id'])).fetchone() if kind=='question' else None
+        invalidated=self.db.execute("SELECT * FROM feedback WHERE guild=? AND turn_id=? AND kind='answer'",(guild,turn['id'])).fetchone()
         with self.db:
-            if invalidated:self.db.execute('DELETE FROM feedback WHERE id=?',(invalidated['id'],))
+            if invalidated and kind=='question':self.db.execute('DELETE FROM feedback WHERE id=?',(invalidated['id'],))
             self.db.execute('''INSERT INTO feedback(guild,uid,turn_id,kind,heard,question,answer,original_answer,created,trainable)
                 VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(guild,turn_id,kind) DO UPDATE SET
                 question=excluded.question,answer=excluded.answer,created=excluded.created,trainable=excluded.trainable''',
