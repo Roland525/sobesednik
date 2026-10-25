@@ -153,7 +153,9 @@ class Conversation:
             trimmed = True
         while trimmed and history and history[0]['role']=='assistant':
             history.pop(0)
-        return [{'role': 'system', 'content': system}, *memory, *history, user]
+        # Keep the reusable dialogue prefix stable when the background changes.
+        # Fresh, explicitly marked evidence stays immediately before this turn.
+        return [{'role': 'system', 'content': system}, *history, *memory, user]
 
     def commit(self, messages, response, include_user=True):
         if not response:

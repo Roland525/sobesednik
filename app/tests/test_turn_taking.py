@@ -54,6 +54,47 @@ class TurnTakingTests(unittest.IsolatedAsyncioTestCase):
         result=await asyncio.wait_for(self.session.speak_stream(Question(1,'Tester','Question',time.monotonic()),[]),.2)
         self.assertEqual(result,'')
 
+    async def test_generation_continues_while_first_sentence_is_synthesized(self):
+        second_generated=asyncio.Event()
+        synthesis_started=asyncio.Event()
+        release_synthesis=asyncio.Event()
+        async def stream(*args):
+            yield 'Первое предложение.'
+            second_generated.set()
+            yield 'Второе предложение.'
+        async def synthesize(text):
+            synthesis_started.set()
+            await release_synthesis.wait()
+            return bytes(3840)
+        self.session.llm.stream_sentences=stream
+        self.session.tts=NS(generate_audio=synthesize)
+        self.session.play_pcm=AsyncMock()
+        task=asyncio.create_task(self.session.speak_stream(Question(1,'Tester','Вопрос',time.monotonic()),
+            [{'role':'user','content':'Вопрос'}]))
+        try:
+            await asyncio.wait_for(synthesis_started.wait(),1)
+            await asyncio.sleep(.02)
+            self.assertTrue(second_generated.is_set(),'LLM stream must advance while TTS is busy')
+        finally:
+            release_synthesis.set()
+            result=await task
+        self.assertEqual(result,'Первое предложение. Второе предложение.')
+        self.assertEqual(self.session.play_pcm.await_count,2)
+
+    async def test_tts_error_closes_prefetched_stream_and_releases_generation(self):
+        closed=asyncio.Event()
+        async def stream(*args):
+            try:
+                while True:yield 'Предложение.'
+            finally:closed.set()
+        self.session.llm.stream_sentences=stream
+        self.session.tts=NS(generate_audio=AsyncMock(side_effect=RuntimeError('synthetic TTS failure')))
+        with self.assertRaises(ExceptionGroup):
+            await asyncio.wait_for(self.session.speak_stream(Question(1,'Tester','Вопрос',time.monotonic()),
+                [{'role':'user','content':'Вопрос'}]),1)
+        self.assertTrue(closed.is_set())
+
+
     async def test_address_to_another_person_does_not_inherit_reply_window(self):
         self.session.voice_client=NS(channel=NS(members=[NS(id=2,display_name='Паша',name='pasha',bot=False)]))
         await self.hear(1,'Серёга, почему небо голубое?')

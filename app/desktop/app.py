@@ -829,6 +829,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
 
     def fill_memory(self,kind=None):
         kind=kind or self.memory_kind.currentData(); self.memory_table.setRowCount(0)
+        self.memory_review_rows=set()
         for record in self.memory_data:
             review=False
             if kind=='notes':
@@ -843,6 +844,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
                 date=time.strftime('%d.%m.%Y %H:%M',time.localtime(record['created']))
                 values=['Вопрос / ответ',record['prompt']+' → '+record['target'],str(record['author']),date,record['kind']]
             index=self.memory_table.rowCount(); self.memory_table.insertRow(index)
+            if review:self.memory_review_rows.add(index)
             for column,value in enumerate(values):
                 item=QTableWidgetItem(redact(str(value),self.token)); item.setToolTip(item.text()); self.memory_table.setItem(index,column,item)
                 if review and column in (1,4):
@@ -852,13 +854,28 @@ class MainWindow(QMainWindow,Views,QualityControls):
         empty={'notes':'Пока нет воспоминаний. Ниже можно включить автоматическое запоминание или добавить запись вручную.',
                'people':'Участники появятся после подключения к голосовому каналу.',
                'examples':'Учебных примеров пока нет. Этот список показывает сохранённые примеры, а не результат дообучения.'}
-        self.memory_count.setText('Записей: '+str(len(self.memory_data)) if self.memory_data else empty.get(kind,'Записей пока нет.'))
+        self.memory_empty_text=empty.get(kind,'Записей пока нет.')
+        self.memory_show_rejected.setVisible(kind=='notes')
+        self.memory_show_rejected.setEnabled(bool(self.memory_review_rows))
+        self.memory_show_rejected.setText('Показать старые автозаписи, которые бот не использует'+
+            (f' ({len(self.memory_review_rows)})' if self.memory_review_rows else ''))
         self.filter_memory()
 
     def filter_memory(self,*args):
         value=self.search.text().casefold()
+        review_rows=getattr(self,'memory_review_rows',set())
+        show_review=self.memory_show_rejected.isChecked()
+        visible=0
         for r in range(self.memory_table.rowCount()):
-            self.memory_table.setRowHidden(r,not any(value in self.memory_table.item(r,c).text().casefold() for c in range(self.memory_table.columnCount())))
+            matches=any(value in self.memory_table.item(r,c).text().casefold() for c in range(self.memory_table.columnCount()))
+            hidden=not matches or (r in review_rows and not show_review)
+            self.memory_table.setRowHidden(r,hidden)
+            visible+=not hidden
+        if visible:self.memory_count.setText('Показано записей: '+str(visible))
+        elif value:self.memory_count.setText('По запросу ничего не найдено.')
+        elif review_rows and not show_review:
+            self.memory_count.setText('Полезных сведений пока нет. Старые автозаписи скрыты и не используются в ответах.')
+        else:self.memory_count.setText(getattr(self,'memory_empty_text','Сохранённых записей пока нет.'))
         selected=self.memory_table.currentRow()
         if selected>=0 and self.memory_table.isRowHidden(selected):
             self.memory_table.clearSelection(); self.memory_table.setCurrentCell(-1,-1)

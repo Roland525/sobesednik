@@ -15,6 +15,17 @@ from bot.voice.transcription_sink import Utterance
 
 
 class MemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    def test_changed_channel_evidence_preserves_cached_dialogue_prefix(self):
+        conversation=Conversation(Config())
+        conversation.history.extend([{'role':'user','content':'[Участник Nick]: Почему небо голубое?'},
+                                     {'role':'assistant','content':'Короткие волны сильнее рассеиваются.'}])
+        first=conversation.messages(10,'Nick','А на закате?',channel_context='[Другой участник]: Я играю в шахматы.')
+        second=conversation.messages(10,'Nick','А на закате?',channel_context='[Другой участник]: Я играю в шашки.')
+        self.assertEqual(first[:3],second[:3], 'Updated background evidence must not invalidate the dialogue prefix')
+        self.assertEqual(first[1:3],list(conversation.history))
+        self.assertTrue(first[-2]['content'].startswith('[Недавняя беседа канала'))
+        self.assertIn('А на закате?',first[-1]['content'])
+
     async def asyncSetUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.memory = MemoryStore(Path(self.folder.name) / 'memory.sqlite3')

@@ -190,6 +190,39 @@ class AutomaticMemoryUsabilityTests(unittest.TestCase):
 
 
 class DurableSelectorProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_noise_only_batch_does_not_call_conversation_model(self):
+        service = OllamaService(logging.getLogger(__name__), Config())
+        await service.client.aclose()
+        requests = []
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(200, json={'message': {'content': '{"facts":[]}'}})
+        service.client = httpx.AsyncClient(base_url='http://selector.test', transport=httpx.MockTransport(handler))
+        try:
+            result = await service.select_memories([{'speaker': 'Speaker', 'text': text} for text in
+                ('Ну там в меню вроде тоже', 'Шарум барум, шурум бурум', 'Блин, у нас тут вообще ничего нет')])
+            self.assertEqual(result, [])
+            self.assertEqual(requests, [], 'Rejected chatter must not evict the conversation prompt cache')
+        finally:
+            await service.close()
+
+    async def test_prefilter_keeps_original_indices_and_sends_only_durable_candidates(self):
+        service = OllamaService(logging.getLogger(__name__), Config())
+        await service.client.aclose()
+        requests = []
+        def handler(request):
+            requests.append(json.loads(request.content))
+            return httpx.Response(200, json={'message': {'content': '{"facts":[{"index":1,"category":"profile"}]}'}})
+        service.client = httpx.AsyncClient(base_url='http://selector.test', transport=httpx.MockTransport(handler))
+        try:
+            result = await service.select_memories([{'speaker': 'Speaker', 'text': 'Ну да'},
+                {'speaker': 'Speaker', 'text': 'Я работаю дизайнером.'}])
+            self.assertEqual(result, [{'index': 1, 'category': 'profile', 'quote': 'Я работаю дизайнером.'}])
+            sent = json.loads(requests[0]['messages'][-1]['content'])
+            self.assertEqual(sent, [{'index': 1, 'speaker': 'Speaker', 'text': 'Я работаю дизайнером.'}])
+        finally:
+            await service.close()
+
     async def select(self, texts, facts):
         service = OllamaService(logging.getLogger(__name__), Config())
         await service.client.aclose()

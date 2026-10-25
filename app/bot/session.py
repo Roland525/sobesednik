@@ -594,32 +594,36 @@ class GuildSession:
         return False
 
     async def speak_stream(self, question, messages):
+        from contextlib import aclosing
+        sentences = asyncio.Queue(maxsize=2)
         audio = asyncio.Queue(maxsize=2)
         spoken = []
         response_start = time.monotonic()
         async def producer():
             if not question.text:
-                await audio.put(None)
+                await sentences.put(None)
                 return
             if question.kind in ('say', 'ambient_say', 'initiative_say', 'safe_say'):
-                sentences = [question.text]
-                for sentence in sentences:
-                    sentence = safe_output(sentence, [self.config.discord_token])
-                    started = time.monotonic()
-                    pcm = await self.tts.generate_audio(sentence)
-                    question.timings.setdefault('tts_ms', (time.monotonic() - started) * 1000)
-                    await audio.put((pcm, sentence))
+                await sentences.put(safe_output(question.text, [self.config.discord_token]))
             else:
-                async for sentence in self.llm.stream_sentences(messages, question.timings):
-                    if (question.kind == 'initiative' and 'first_playback_ms' not in question.timings
-                        and self.last_human_at > question.enqueued_at):
-                        await audio.put(None)
-                        return
-                    started = time.monotonic()
-                    pcm = await self.tts.generate_audio(sentence)
-                    question.timings.setdefault('tts_ms', (time.monotonic() - started) * 1000)
-                    question.timings.setdefault('tts_ready_ms', (time.monotonic() - response_start) * 1000)
-                    await audio.put((pcm, sentence))
+                # Reading tokens must continue while CPU speech synthesis runs.
+                # Closing the iterator on stop/error also releases its LLM lock.
+                async with aclosing(self.llm.stream_sentences(messages, question.timings)) as stream:
+                    async for sentence in stream:
+                        if (question.kind == 'initiative' and 'first_playback_ms' not in question.timings
+                            and self.last_human_at > question.enqueued_at):
+                            break
+                        await sentences.put(sentence)
+            await sentences.put(None)
+        async def synthesizer():
+            while True:
+                sentence=await sentences.get()
+                if sentence is None:break
+                started=time.monotonic()
+                pcm=await self.tts.generate_audio(sentence)
+                question.timings.setdefault('tts_ms',(time.monotonic()-started)*1000)
+                question.timings.setdefault('tts_ready_ms',(time.monotonic()-response_start)*1000)
+                await audio.put((pcm,sentence))
             await audio.put(None)
         async def player():
             while True:
@@ -639,6 +643,7 @@ class GuildSession:
         try:
             async with asyncio.TaskGroup() as group:
                 group.create_task(producer())
+                group.create_task(synthesizer())
                 group.create_task(player())
         except* SpeechDeferred:
             pass

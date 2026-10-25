@@ -32,6 +32,26 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(self.window.pages.currentIndex(),index)
         self.assertEqual(self.window.token_input.echoMode(),QLineEdit.Password)
 
+    def test_rejected_old_auto_memory_is_hidden_by_default_and_can_be_reviewed(self):
+        deadline=__import__('time').monotonic()+3
+        while self.window.memory_pending and __import__('time').monotonic()<deadline:
+            self.app.processEvents();QTest.qWait(10)
+        base={'guild':1,'target_name':'Person','author_name':'Person','updated':1,'kind':'fact'}
+        self.window.memory_data=[dict(base,record_id=1,slot='auto:quote:old',content='Ну там в меню вроде тоже'),
+            dict(base,record_id=2,slot='owner:manual',content='Янтарь')]
+        self.window.loaded_memory_key=('notes',self.window.guild_id())
+        self.window.fill_memory('notes')
+        self.assertTrue(self.window.memory_table.isRowHidden(0))
+        self.assertFalse(self.window.memory_table.isRowHidden(1))
+        self.assertIn('1',self.window.memory_count.text())
+        self.window.memory_show_rejected.setChecked(True)
+        self.assertFalse(self.window.memory_table.isRowHidden(0))
+        self.window.memory_table.selectRow(0)
+        self.assertEqual(self.window.selected_record()['record_id'],1)
+        self.window.memory_show_rejected.setChecked(False)
+        with self.assertRaises(ValueError):self.window.selected_record()
+        self.assertEqual(len(self.window.memory_data),2,'Review does not delete saved data')
+
     def test_invited_server_appears_while_voice_prepares_then_join_is_enabled(self):
         state={'ready':True,'services_ready':False,'services_stage':'Загрузка распознавания речи',
                'guilds':[{'id':'1','name':'New server','channels':[{'id':'2','name':'Voice'}]}]}
