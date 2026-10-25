@@ -85,6 +85,8 @@ def memory_request(text):
 
 def personal_fact(text, canonical=False):
     text = re.sub(r'^(?:(?:поправка|нет|теперь)[,:]?\s*)+', '', text.strip(' .!'), flags=re.I)
+    if re.fullmatch(r'я (?:работаю|учусь|по профессии)\s+.+', text, re.I) and observation_text(text):
+        return 'auto:occupation', text
     separator = r'\s*(?:(?:теперь|это)\s+)?[:—-]?\s*'
     for slot, prefix, label, limit in (
         ('favorite_game', r'(?:моя )?любимая игра', 'Любимая игра: ', 100),
@@ -259,7 +261,7 @@ class MemoryStore:
         exists = self.db.execute('SELECT * FROM notes WHERE guild=? AND source=? AND slot=?',
                                  (guild, source, slot)).fetchone()
         content=self.clean(content)
-        if exists and all(exists[key]==value for key,value in
+        if exists and slot != 'auto:occupation' and all(exists[key]==value for key,value in
                           [('content',content),('target',target),('alias',alias),('kind',kind)]):return True
         count = self.db.execute('SELECT COUNT(*) FROM notes WHERE guild=?', (guild,)).fetchone()[0]
         own_count = self.db.execute('SELECT COUNT(*) FROM notes WHERE guild=? AND source=?', (guild, source)).fetchone()[0]
@@ -272,9 +274,18 @@ class MemoryStore:
                 self.db.execute('DELETE FROM note_history WHERE guild=? AND source=? AND slot=? AND id NOT IN '
                     '(SELECT id FROM note_history WHERE guild=? AND source=? AND slot=? ORDER BY id DESC LIMIT 20)',
                     (guild,source,slot,guild,source,slot))
-            if slot in ('favorite_game', 'favorite_color', 'role', 'car', 'city', 'age'):
+            if slot in ('favorite_game', 'favorite_color', 'role', 'car', 'city', 'age', 'auto:occupation'):
                 legacy = self.db.execute("SELECT slot,content FROM notes WHERE guild=? AND source=? AND target=? AND slot LIKE 'note:%'",
                                          (guild, source, target)).fetchall()
+                if slot == 'auto:occupation':
+                    for row in legacy:
+                        if row['content'] != content and (fact := personal_fact(row['content'], canonical=True)) and fact[0] == slot:
+                            self.db.execute('INSERT INTO note_history(guild,source,slot,target,content,updated,replaced) '
+                                'SELECT guild,source,?,target,content,updated,? FROM notes WHERE guild=? AND source=? AND slot=?',
+                                (slot,time.time(),guild,source,row['slot']))
+                    self.db.execute('DELETE FROM note_history WHERE guild=? AND source=? AND slot=? AND id NOT IN '
+                        '(SELECT id FROM note_history WHERE guild=? AND source=? AND slot=? ORDER BY id DESC LIMIT 20)',
+                        (guild,source,slot,guild,source,slot))
                 self.db.executemany('DELETE FROM notes WHERE guild=? AND source=? AND slot=?',
                                     [(guild, source, row['slot']) for row in legacy
                                      if (fact := personal_fact(row['content'], canonical=True)) and fact[0] == slot])
@@ -559,7 +570,8 @@ class MemoryStore:
                 return MemoryResult('Что именно запомнить?')
             slot = 'note:' + hashlib.sha256(normalized(body).encode()).hexdigest()[:24]
             mentioned = self.mentioned(guild, body)
-            target = next(iter(mentioned)) if len(mentioned) == 1 else uid
+            first_person = bool(re.match(r'^(?:я|мне|меня|мой|моя|мо[её]|мои|у меня)\b', body, re.I))
+            target = next(iter(mentioned)) if len(mentioned) == 1 and not first_person else uid
             first = re.match(r'^([А-Яа-яЁё]+)\s+(?:(?:любит|играет|работает|жив[её]т|предпочитает|это)\b|[—-])', body)
             alias = name_key(first[1]) if first and name_key(first[1]) in _ALIASES.values() else ''
             if alias and not mentioned:

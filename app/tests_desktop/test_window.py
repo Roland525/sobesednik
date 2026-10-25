@@ -322,3 +322,148 @@ class WindowTests(unittest.TestCase):
             while self.window.jobs and __import__('time').monotonic()<deadline:
                 self.app.processEvents();QTest.qWait(10)
         self.assertEqual(events,['download','stop','handoff'])
+
+    def wait_for_jobs(self):
+        import time
+        deadline=time.monotonic()+3
+        while self.window.jobs and time.monotonic()<deadline:
+            self.app.processEvents();QTest.qWait(10)
+        self.assertFalse(self.window.jobs)
+
+    def test_save_preserves_all_valid_existing_voice_and_conversation_values(self):
+        for speed,mode,limit in [(0.5,'participant',40),(2.0,'summon',2000)]:
+            with self.subTest(speed=speed,mode=mode):
+                values={'tts_speed':speed,'conversation_mode':mode,'max_response_chars':limit}
+                self.window.profile.save_settings(values);self.window.reload_forms()
+                self.window.save_settings()
+                saved=self.window.profile.settings()
+                self.assertEqual({key:saved[key] for key in values},values)
+
+    def test_switching_profile_clears_discord_identity_and_unsaved_token(self):
+        self.wait_for_jobs()
+        self.window.account={'id':'123456789','username':'previous-profile'}
+        self.window.token_input.setText('synthetic-unsaved-token')
+        self.window.switch_profile(self.window.profile.root/'new-profile')
+        self.window.reload_forms()
+        self.assertIsNone(self.window.account)
+        self.assertEqual(self.window.token_input.text(),'')
+
+    def test_save_preserves_voice_precision_until_control_changes(self):
+        self.window.profile.save_settings({'tts_speed':1.2345,'tts_volume':0.8555})
+        self.window.reload_forms();self.window.save_settings()
+        saved=self.window.profile.settings()
+        self.assertEqual(saved['tts_speed'],1.2345);self.assertEqual(saved['tts_volume'],0.8555)
+        self.window.speed.setValue(1.2);self.window.volume.setValue(0.9);self.window.save_settings()
+        self.assertEqual(self.window.profile.settings()['tts_speed'],1.2)
+        self.assertEqual(self.window.profile.settings()['tts_volume'],0.9)
+        self.window.speed.setValue(1.23);self.window.save_settings()
+        self.assertEqual(self.window.profile.settings()['tts_speed'],1.23)
+
+    def test_save_preserves_resource_overrides_when_slider_is_untouched(self):
+        import json
+        from desktop.storage import atomic_json
+        cases=[{'resource_level':70,'ollama_num_gpu':-1,'ollama_num_thread':4,
+                'whisper_cpu_threads':4,'tts_cpu_threads':4},
+               {'resource_level':70,'ollama_num_gpu':15,'ollama_num_thread':3,
+                'whisper_cpu_threads':5,'tts_cpu_threads':2}]
+        for original in cases:
+            with self.subTest(original=original):
+                atomic_json(self.window.profile.root/'config.json',original)
+                self.window.reload_forms();self.window.volume.setValue(0.9)
+                with patch('bot.config.os.cpu_count',return_value=16):self.window.save_settings()
+                saved=json.loads((self.window.profile.root/'config.json').read_text(encoding='utf-8'))
+                self.assertEqual({key:saved[key] for key in original},original)
+
+    def test_changed_resource_slider_applies_mapping_once(self):
+        import json
+        from desktop.storage import atomic_json
+        atomic_json(self.window.profile.root/'config.json',{'resource_level':70,
+            'ollama_num_gpu':-1,'ollama_num_thread':4,'whisper_cpu_threads':4,'tts_cpu_threads':4})
+        self.window.reload_forms();self.window.resource_slider.setValue(40)
+        with patch('bot.config.os.cpu_count',return_value=16):self.window.save_settings()
+        expected={'resource_level':40,'ollama_num_gpu':20,'ollama_num_thread':6,
+            'whisper_cpu_threads':6,'tts_cpu_threads':4}
+        saved=json.loads((self.window.profile.root/'config.json').read_text(encoding='utf-8'))
+        self.assertEqual({key:saved[key] for key in expected},expected)
+        # Later ordinary saves preserve the applied budget even on a different CPU.
+        self.window.volume.setValue(1.0)
+        with patch('bot.config.os.cpu_count',return_value=32):self.window.save_settings()
+        saved=json.loads((self.window.profile.root/'config.json').read_text(encoding='utf-8'))
+        self.assertEqual({key:saved[key] for key in expected},expected)
+
+    def test_resource_description_distinguishes_saved_threads_from_pending_budget(self):
+        from desktop.storage import atomic_json
+        original={'resource_level':70,'ollama_num_gpu':0,'ollama_num_thread':4,
+            'whisper_cpu_threads':3,'tts_cpu_threads':2}
+        atomic_json(self.window.profile.root/'config.json',original)
+        with patch('bot.config.os.cpu_count',return_value=16):
+            self.window.reload_forms()
+            saved=self.window.resource_description.text()
+            self.assertIn('модель: 4 потоков CPU',saved)
+            self.assertIn('распознавание: 3',saved);self.assertIn('синтез: 2',saved)
+            self.assertNotIn('После сохранения',saved)
+            self.window.resource_slider.setValue(40)
+            pending=self.window.resource_description.text()
+            self.assertIn('После сохранения',pending)
+            self.assertIn('модель: 6 потоков CPU',pending)
+            self.window.save_settings()
+            applied=self.window.resource_description.text()
+            self.assertNotIn('После сохранения',applied)
+            self.assertIn('модель: 6 потоков CPU',applied)
+            self.window.resource_slider.setValue(70)
+            self.assertIn('После сохранения',self.window.resource_description.text())
+            self.assertIn('модель: 11 потоков CPU',self.window.resource_description.text())
+    def test_switching_profile_does_not_offer_old_models_or_recommendations(self):
+        self.wait_for_jobs()
+        self.window.accept_model_inventory([{'name':'synthetic:model','size':1024,'details':{'family':'synthetic'}}])
+        self.window.tuning_report={'recommendation':{'model':'synthetic:model','resource_level':100}}
+        self.window.tune_apply.setEnabled(True)
+        self.window.tune_result.setPlainText('old recommendation')
+        self.window.switch_profile(self.window.profile.root/'new-profile');self.window.reload_forms()
+        self.assertEqual(self.window.model_choice.findData('synthetic:model'),-1)
+        self.assertFalse(self.window.installed_model_names)
+        self.assertFalse(self.window.installed_model_sizes)
+        self.assertFalse(self.window.installed_model_metadata)
+        self.assertIsNone(self.window.tuning_report)
+        self.assertFalse(self.window.tune_apply.isEnabled())
+        self.assertEqual(self.window.tune_result.toPlainText(),'')
+
+    def test_switching_profile_clears_conversation_diagnostics_and_drafts(self):
+        self.wait_for_jobs()
+        self.window.context_edit.setPlainText('old conversation')
+        self.window.log_edit.setPlainText('old logs')
+        self.window.feedback_result.setPlainText('old feedback report')
+        self.window.memory_input.setText('old unsaved fact');self.window.search.setText('old search')
+        self.window.state={'sessions':{'0':{'turns':[{'id':'old','name':'User','heard':'old question','status':'answered'}]}}}
+        self.window.refresh_diagnostics();self.assertEqual(self.window.turn_table.rowCount(),1)
+        self.window.switch_profile(self.window.profile.root/'new-profile');self.window.reload_forms()
+        for editor in [self.window.context_edit,self.window.log_edit,self.window.feedback_result]:
+            self.assertEqual(editor.toPlainText(),'')
+        self.assertEqual(self.window.memory_input.text(),'');self.assertEqual(self.window.search.text(),'')
+        self.assertEqual(self.window.turn_table.rowCount(),0)
+        self.assertIsNone(self.window.selected_turn())
+
+    def test_switching_profile_waits_for_background_read_and_callback(self):
+        import threading
+        self.wait_for_jobs();release=threading.Event();old=self.window.profile.root
+        target=old/'new-profile'
+        self.window.run_job(lambda _:release.wait(3),lambda _:self.window.profile.save_persona('old profile callback'),operation=False)
+        try:
+            with self.assertRaises(RuntimeError):self.window.switch_profile(target)
+        finally:
+            release.set();self.wait_for_jobs()
+        self.assertEqual(self.window.profile.root,old)
+        self.assertEqual(self.window.profile.persona(),'old profile callback')
+        self.assertFalse((target/'PERSONA.md').exists())
+
+    def test_filtering_memory_clears_hidden_selection_and_rejects_hidden_record(self):
+        self.wait_for_jobs()
+        self.window.memory_data=[{'record_id':i,'guild':1,'target_name':'Owner','content':content,
+            'author_name':'Owner','updated':1,'kind':'fact'} for i,content in [(10,'apples'),(20,'oranges')]]
+        self.window.loaded_memory_key=(self.window.memory_kind.currentData(),self.window.guild_id())
+        self.window.fill_memory('notes');self.window.memory_table.selectRow(0)
+        self.window.search.setText('oranges')
+        self.assertFalse(self.window.memory_table.selectedItems())
+        with self.assertRaises(ValueError):self.window.selected_record()
+        self.window.memory_table.setCurrentCell(0,0)
+        with self.assertRaises(ValueError):self.window.selected_record()

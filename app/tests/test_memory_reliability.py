@@ -86,6 +86,90 @@ class MemoryReliabilityTests(unittest.TestCase):
         self.assertEqual(note['target_id'], 20)
         self.assertEqual(note['source_id'], 10)
 
+    def test_explicit_first_person_fact_keeps_author_as_target_when_mentioning_another_member(self):
+        self.memory.register(1, 20, 'Bob')
+        for body in ('я в одной команде с Bob', 'мне помогает Bob', 'меня тренирует Bob',
+                     'мой напарник Bob', 'моя команда играет с Bob', 'у меня команда с Bob'):
+            with self.subTest(body=body):
+                self.assertIn('Запомнил', self.say('Запомни: ' + body).reply)
+                note = self.memory.db.execute('SELECT source,target FROM notes WHERE content=?', (body,)).fetchone()
+                self.assertEqual(note['source'], 10)
+                self.assertEqual(note['target'], 10)
+
+    def test_forgetting_mentioned_member_keeps_authors_first_person_fact_after_restart(self):
+        self.memory.register(1, 20, 'Bob')
+        self.say('Запомни: я в одной команде с Bob')
+        self.memory.close()
+        self.memory = MemoryStore(self.path)
+        self.say('Забудь всё обо мне', uid=20, nick='Bob')
+        note = self.memory.db.execute('SELECT source,target FROM notes WHERE source=10').fetchone()
+        self.assertIsNotNone(note)
+        self.assertEqual(note['target'], 10)
+
+    def test_explicit_and_auto_occupation_share_current_fact_and_revision_history(self):
+        for explicit_first in (True, False):
+            with self.subTest(explicit_first=explicit_first):
+                uid = 30 if explicit_first else 40
+                if explicit_first:
+                    self.say('Запомни: я работаю курьером', uid=uid)
+                    self.memory.observe_auto(1, uid, 'Owner', 'Теперь я работаю дизайнером')
+                else:
+                    self.memory.observe_auto(1, uid, 'Owner', 'Я работаю курьером')
+                    self.say('Запомни: теперь я работаю дизайнером', uid=uid)
+                rows = self.memory.db.execute('SELECT rowid,* FROM notes WHERE source=?', (uid,)).fetchall()
+                self.assertEqual(len(rows), 1)
+                history = self.memory.history(1, rows[0]['rowid'])
+                self.assertEqual(len(history), 2)
+                self.assertIn('курьером', history[0]['content'])
+                self.assertIn('дизайнером', history[1]['content'])
+                self.assertNotIn('курьером', self.memory.context(1, uid, 'Кем я работаю?'))
+
+    def test_legacy_explicit_occupation_moves_to_history_when_auto_fact_changes(self):
+        self.memory.save(1, 10, 'note:legacy', 'я работаю курьером', target=10)
+        self.memory.observe_auto(1, 10, 'Owner', 'Теперь я работаю дизайнером')
+        rows = self.memory.db.execute('SELECT rowid,* FROM notes WHERE source=10').fetchall()
+        self.assertEqual(len(rows), 1)
+        history = self.memory.history(1, rows[0]['rowid'])
+        self.assertEqual(len(history), 2)
+        self.assertIn('курьером', history[0]['content'])
+        self.assertIn('дизайнером', history[1]['content'])
+
+    def test_repeated_current_occupation_also_archives_stale_legacy_explicit_fact(self):
+        self.memory.save(1, 10, 'note:legacy', 'я работаю курьером', target=10)
+        self.memory.save(1, 10, 'auto:occupation', 'я работаю дизайнером', target=10)
+        # Recreate the pre-upgrade state with both kinds of current record.
+        self.memory.save(1, 10, 'note:legacy', 'я работаю курьером', target=10)
+        self.memory.observe_auto(1, 10, 'Owner', 'я работаю дизайнером')
+        rows = self.memory.db.execute('SELECT rowid,* FROM notes WHERE source=10').fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertIn('курьером', str(self.memory.history(1, rows[0]['rowid'])))
+
+    def test_third_party_occupation_does_not_replace_speakers_occupation(self):
+        self.memory.register(1, 20, 'Bob')
+        self.say('Запомни: я работаю курьером')
+        self.say('Запомни: Bob работает дизайнером')
+        rows = self.memory.db.execute('SELECT target,content FROM notes ORDER BY updated').fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row['target'] for row in rows], [10, 20])
+
+    def test_transient_work_statement_does_not_replace_durable_occupation(self):
+        self.memory.observe_auto(1, 10, 'Owner', 'Я работаю дизайнером')
+        result = self.say('Я работаю сегодня до шести')
+        self.assertEqual(result.reply, '')
+        rows = self.memory.db.execute('SELECT slot,content FROM notes WHERE source=10').fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['content'], 'Я работаю дизайнером')
+
+    def test_explicit_transient_work_statement_is_a_note_without_replacing_occupation(self):
+        self.memory.observe_auto(1, 10, 'Owner', 'Я работаю дизайнером')
+        self.assertIn('Запомнил', self.say('Запомни: я работаю сегодня до шести').reply)
+        rows = self.memory.db.execute('SELECT slot,content FROM notes WHERE source=10 ORDER BY updated').fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['slot'], 'auto:occupation')
+        self.assertEqual(rows[0]['content'], 'Я работаю дизайнером')
+        self.assertTrue(rows[1]['slot'].startswith('note:'))
+        self.assertEqual(rows[1]['content'], 'я работаю сегодня до шести')
+
     def test_pending_capture_can_be_cancelled_and_never_saves_a_new_question(self):
         self.say('Запомни это')
         self.say('Не запоминай это')

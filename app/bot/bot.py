@@ -438,7 +438,7 @@ class DiscordBot(commands.Bot):
                 session.sink.target_user_id = ctx.author.id
             await ctx.send('Слушаю только тебя до следующего /join или /listenall.', ephemeral=True)
 
-        @self.hybrid_command(name='mode', description='Режим: strict — имя в каждой фразе, summon — диалог, participant — участник')
+        @self.hybrid_command(name='mode', description='Режим: strict — обращения, rare — редкие дополнения, summon — диалог')
         @commands.guild_only()
         async def mode(ctx, mode: str):
             self.require_voice_control(ctx)
@@ -450,7 +450,7 @@ class DiscordBot(commands.Bot):
             session.require_wake_each_turn = mode == 'strict'
             await session.reset(clear_context=False)
             label = {'participant': 'участник беседы', 'summon': 'по имени с продолжением диалога',
-                     'strict': 'только обращение по имени в каждой фразе',
+                     'strict': 'обращения по имени; связанные уточнения — если включены в настройках',
                      'rare': 'по имени и редкие реплики по понятному контексту'}[mode]
             await ctx.send('Режим: ' + label, ephemeral=True)
 

@@ -16,7 +16,7 @@ from .discord_api import PORTAL,bot_account,invite_url
 from .install import Installer
 from .protocol import Protocol
 from .runtime import Runtime,run_step,sample_resources
-from .storage import Profile,default_root,install_payload,atomic_json,redact
+from .storage import Profile,default_root,install_payload,atomic_json,redact,read_shared
 from .style import STYLE
 from .views import Views
 from .quality import QualityControls
@@ -246,11 +246,14 @@ class MainWindow(QMainWindow,Views,QualityControls):
             if installed!=self.last_install_state:
                 self.maintenance.setExpanded(not installed);self.last_install_state=installed
             self.populate_models(getattr(self,'installed_model_names',[]),cfg['ollama_model'])
-            self.resource_slider.setValue(cfg.get('resource_level',70));self.resource_level_changed()
+            self.loaded_resource_level=cfg.get('resource_level',70)
+            self.resource_slider.setValue(self.loaded_resource_level);self.resource_level_changed()
             self.bot_name_input.setText(cfg['bot_name']); self.voice_choice.setCurrentText(cfg['tts_supertonic_voice'])
             self.applied_identity=(cfg['bot_name'],cfg['wake_word'])
             self.identity_status.setText('В голосе: «'+cfg['wake_word']+'». Ник на сервере: '+cfg['bot_name']+'.')
             self.speed.setValue(cfg['tts_speed']); self.volume.setValue(cfg['tts_volume'])
+            self.loaded_voice_values={'tts_speed':(cfg['tts_speed'],self.speed.value()),
+                'tts_volume':(cfg['tts_volume'],self.volume.value())}
             self.length.setValue(cfg['max_response_chars']); self.history.setValue(cfg['history_turns'])
             index=self.mode_choice.findData(cfg['conversation_mode']); self.mode_choice.setCurrentIndex(max(0,index))
             self.reasoning.setChecked(cfg['ollama_reasoning']); self.dota.setChecked(cfg['dota_patch_source_enabled'])
@@ -404,17 +407,28 @@ class MainWindow(QMainWindow,Views,QualityControls):
     def save_settings(self,restart=False):
         try:
             model=self.model_choice.currentData()
+            level=self.resource_slider.value()
+            resource_patch={'resource_level':level} if level!=getattr(self,'loaded_resource_level',level) else {}
+            # The two-decimal controls must not round an untouched file value.
+            voice_values={}
+            for key,widget in [('tts_speed',self.speed),('tts_volume',self.volume)]:
+                original,shown=getattr(self,'loaded_voice_values',{}).get(key,(widget.value(),widget.value()))
+                voice_values[key]=original if widget.value()==shown else widget.value()
             # Existing selection can be saved offline; changing it requires a
             # confirmed local model, never an arbitrary cloud endpoint.
             if model!=self.profile.settings()['ollama_model'] and model.casefold() not in {
                     item.casefold() for item in getattr(self,'installed_model_names',[])}:
                 raise ValueError('Сначала скачайте модель и обновите список.')
-            self.profile.save_settings({'ollama_model':model,'response_profile':'custom','resource_level':self.resource_slider.value(),
-                'tts_supertonic_voice':self.voice_choice.currentText(),'tts_speed':self.speed.value(),
-                'tts_volume':self.volume.value(),'conversation_mode':self.mode_choice.currentData(),
+            self.profile.save_settings({'ollama_model':model,'response_profile':'custom',**resource_patch,
+                'tts_supertonic_voice':self.voice_choice.currentText(),**voice_values,
+                'conversation_mode':self.mode_choice.currentData(),
                 'max_response_chars':self.length.value(),'history_turns':self.history.value(),
                 'ollama_reasoning':self.reasoning.isChecked(),'dota_patch_source_enabled':self.dota.isChecked(),
                 'followup_enabled':self.followup.isChecked(),'interrupt_enabled':self.interrupt.isChecked()})
+            self.loaded_voice_values={key:(voice_values[key],widget.value())
+                for key,widget in [('tts_speed',self.speed),('tts_volume',self.volume)]}
+            self.loaded_resource_level=level
+            self.resource_level_changed()
             self.notice('Настройки сохранены. Для применения перезапустите бота.')
             if restart and self.runtime.running(): self.restart_bot()
         except Exception as error: self.notice(str(error))
@@ -458,11 +472,18 @@ class MainWindow(QMainWindow,Views,QualityControls):
         self.benchmark_result.setPlainText('Для этой модели при выбранных ресурсах сохранённого теста пока нет.')
 
     def resource_level_changed(self,*args):
-        from bot.config import resource_settings
-        value=self.resource_slider.value();settings=resource_settings(value)
+        from bot.config import Config,resource_settings
+        value=self.resource_slider.value();pending=value!=getattr(self,'loaded_resource_level',value)
+        if pending:settings=resource_settings(value)
+        else:
+            path=self.profile.root/'config.json'
+            raw=json.loads(read_shared(path,'utf-8-sig')) if path.exists() else {}
+            defaults=Config()
+            settings={key:raw.get(key,getattr(defaults,key)) for key in
+                ('ollama_num_gpu','ollama_num_thread','whisper_cpu_threads','tts_cpu_threads')}
         layers=settings['ollama_num_gpu']
         gpu='CPU' if layers==0 else 'Все слои на GPU, если помещаются' if layers==-1 else f'До {layers} слоёв модели на GPU'
-        self.resource_description.setText(f"{value}/100 · модель: {settings['ollama_num_thread']} потоков CPU · распознавание: {settings['whisper_cpu_threads']} · синтез: {settings['tts_cpu_threads']} · {gpu}")
+        self.resource_description.setText(('После сохранения · ' if pending else 'Сохранено · ')+f"{value}/100 · модель: {settings['ollama_num_thread']} потоков CPU · распознавание: {settings['whisper_cpu_threads']} · синтез: {settings['tts_cpu_threads']} · {gpu}")
         self.load_saved_benchmark()
 
     def update_model_actions(self,*args):
@@ -637,7 +658,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
     def switch_profile(self,folder):
         folder=Path(folder).resolve()
         if folder==self.profile.root: return
-        if self.runtime.running() or self.busy or self.memory_pending:
+        if self.runtime.running() or self.busy or self.memory_pending or self.jobs:
             raise RuntimeError('Сначала остановите бота и дождитесь завершения операций.')
         folder.mkdir(parents=True,exist_ok=True)
         new_lock=self.acquire_lock(folder)
@@ -650,7 +671,16 @@ class MainWindow(QMainWindow,Views,QualityControls):
             new_lock.unlock(); raise
         self.profile_lock.unlock(); self.profile_lock=new_lock
         self.profile=profile; self.runtime=runtime; self.protocol=runtime.protocol
-        self.token=token; self.state={}; self.guilds=[]; self.last_memory_guild=None
+        self.token=token; self.account=None; self.token_input.clear()
+        self.installed_model_names=[]; self.installed_model_sizes={}; self.installed_model_metadata={}
+        self.tuning_report=None; self.tune_apply.setEnabled(False); self.tune_result.clear()
+        self.context_edit.clear(); self.log_edit.clear(); self.feedback_result.clear()
+        self.memory_input.clear(); self.search.clear(); self.install_log.clear()
+        self.model_progress.setValue(0); self.benchmark_result.clear()
+        self.model_status.setText('Нажмите «Обновить список», чтобы проверить установленные модели.')
+        self.state={}; self.guilds=[]; self.last_memory_guild=None
+        self.turn_signature=None; self.refresh_diagnostics(); self.refresh_errand()
+        self.latency_card.update_value('—','Ответов в этом профиле пока нет')
         self.memory_data=[]; self.loaded_memory_key=None; self.update_guilds([])
 
     def command(self,operation,payload=None):
@@ -762,12 +792,16 @@ class MainWindow(QMainWindow,Views,QualityControls):
         value=self.search.text().casefold()
         for r in range(self.memory_table.rowCount()):
             self.memory_table.setRowHidden(r,not any(value in self.memory_table.item(r,c).text().casefold() for c in range(self.memory_table.columnCount())))
+        selected=self.memory_table.currentRow()
+        if selected>=0 and self.memory_table.isRowHidden(selected):
+            self.memory_table.clearSelection(); self.memory_table.setCurrentCell(-1,-1)
 
     def selected_record(self):
         if self.memory_pending or self.loaded_memory_key!=(self.memory_kind.currentData(),self.guild_id()):
             raise ValueError('Дождитесь загрузки выбранного списка памяти')
         row=self.memory_table.currentRow()
-        if row<0 or row>=len(self.memory_data): raise ValueError('Сначала выберите запись в таблице')
+        if row<0 or row>=len(self.memory_data) or self.memory_table.isRowHidden(row):
+            raise ValueError('Сначала выберите видимую запись в таблице')
         return self.memory_data[row]
 
     def confirm(self,text):

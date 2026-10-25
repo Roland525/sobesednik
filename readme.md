@@ -11,7 +11,7 @@
 *Sobesednik is an open-source local AI voice companion for Discord, with Russian speech,
 participant memory and a Windows installer.*
 
-**[⬇ СКАЧАТЬ ДЛЯ WINDOWS · EXE](https://github.com/Roland525/sobesednik/releases/download/v1.1.2/Sobesednik-Setup-1.1.2.exe)**
+**[⬇ СКАЧАТЬ ДЛЯ WINDOWS · EXE](https://github.com/Roland525/sobesednik/releases/download/v1.1.3/Sobesednik-Setup-1.1.3.exe)**
 
 [Первая настройка](docs/GUIDE.md#как-получить-токен-бота) · [Все выпуски](https://github.com/Roland525/sobesednik/releases) · [Сообщить о проблеме](https://github.com/Roland525/sobesednik/issues)
 
@@ -33,7 +33,7 @@ participant memory and a Windows installer.*
 ## Начните с трёх шагов
 
 1. **Установите приложение.** Скачайте EXE по кнопке выше и откройте ярлык «Собеседник».
-2. **Установите компоненты.** На вкладке «Обзор» нажмите «Установить компоненты» — приложение загрузит Python, зависимости и модели.
+2. **Установите компоненты.** На «Главной» откройте «Установка и обслуживание» и нажмите «Установить компоненты» — приложение загрузит Python, зависимости и модели.
 3. **Подключите Discord.** Создайте своего бота по [короткой инструкции](docs/GUIDE.md#как-получить-токен-бота), вставьте токен в приложении и пригласите его на сервер. Запустите бота и выберите голосовой канал.
 
 > **«Собеседник, почему небо голубое?»**
@@ -57,7 +57,7 @@ participant memory and a Windows installer.*
 - Интернет нужен для Discord и загрузки компонентов; чтение официальных патчноутов Dota 2 включается отдельно.
 - Бот может ошибаться. Просмотр демонстраций Discord Go Live пока не реализован.
 - Постоянная память доступна сразу. Обучение весов — отдельная экспериментальная функция с дополнительными требованиями.
-- EXE пока без цифровой подписи издателя. Контрольная сумма опубликована в [выпуске](https://github.com/Roland525/sobesednik/releases/tag/v1.1.2).
+- EXE пока без цифровой подписи издателя. Контрольная сумма опубликована в [выпуске](https://github.com/Roland525/sobesednik/releases/tag/v1.1.3).
 - Удаление приложения сохраняет модели и память в `%LOCALAPPDATA%\Sobesednik`; подробности — в [руководстве](docs/GUIDE.md).
 
 </details>

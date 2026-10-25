@@ -45,6 +45,21 @@ class FeedbackTests(unittest.TestCase):
         self.assertTrue(feedback_gate([{'id':1,'pass':True}],[]))
         self.assertEqual(feedback_gate([],[]),[])
 
+    def test_long_answer_cannot_pass_after_changing_one_essential_fact(self):
+        expected='Столица Франции Париж, главный город и культурный центр страны.'
+        self.assertFalse(matches_expected(expected.replace('Париж','Лион'),expected))
+        self.assertTrue(matches_expected(expected.upper(),expected))
+
+    def test_long_answer_cannot_pass_changed_number_or_added_claim(self):
+        expected='В одном километре ровно 1000 метров, это единица длины.'
+        self.assertFalse(matches_expected(expected.replace('1000','100'),expected))
+        self.assertFalse(matches_expected(expected+' А в метре сто километров.',expected))
+
+    def test_answer_word_is_not_removed_from_identical_reference(self):
+        expected='Ответ на этот вопрос зависит от температуры воды.'
+        self.assertTrue(matches_expected(expected,expected))
+        self.assertTrue(matches_expected('Ответ: четыре.','Четыре.'))
+
     def test_forget_removes_feedback_cases_from_shared_learning_database(self):
         from bot.feedback import purge_feedback
         self.store.add(1,self.turn,'answer','Четыре.')

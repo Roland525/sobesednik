@@ -79,11 +79,11 @@ def matches_expected(answer,expected):
     def words(text):
         return [numbers.get(word,word) for word in re.findall(r'\w+',text.casefold().replace('ё','е'))]
     actual,wanted=words(answer),words(expected)
-    if len(wanted)<=5:
-        if actual[:1]==['ответ']:actual=actual[1:]
-        return actual==wanted
-    if bool(re.search(r'\bне\b',answer,re.I))!=bool(re.search(r'\bне\b',expected,re.I)):return False
-    return len(set(actual)&set(wanted))/max(1,len(set(wanted)))>=.75
+    if actual[:1]==['ответ'] and wanted[:1]!=['ответ']:actual=actual[1:]
+    # Word overlap cannot establish factual equivalence: changing just a city,
+    # a number or the subject can reverse a mostly identical answer. This is an
+    # automatic weight-promotion gate, so uncertain paraphrases must fail closed.
+    return bool(wanted) and actual==wanted
 
 
 def feedback_gate(baseline,candidate):
