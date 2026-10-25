@@ -10,12 +10,22 @@ import sys
 import time
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from bot.config import Config,resource_settings
+from bot.config import Config,compute_settings,normalize_compute
 from bot.runtime import prepare_runtime
 from bot.tuning import choose_recommendation
 from desktop.model_benchmark import CASES,passes
 from desktop.models import installed_models
 from desktop.storage import atomic_json
+
+
+def apply_candidate(cfg,candidate):
+    """Apply exactly the settings subsequently recorded in the measurement."""
+    mode=candidate.get('compute_mode',cfg.compute_mode)
+    options=compute_settings(mode)
+    cfg.compute_mode=mode
+    cfg.ollama_model=candidate['model']
+    for key,value in options.items():setattr(cfg,key,value)
+    return options
 
 
 async def measure(root,candidates,output):
@@ -24,7 +34,7 @@ async def measure(root,candidates,output):
     from bot.services.audio_service import AudioService
     from bot.services.tts_service import TTSService
     from bot.services.ollama_service import OllamaService
-    raw=json.loads((root/'config.json').read_text(encoding='utf-8-sig'))
+    raw=normalize_compute(json.loads((root/'config.json').read_text(encoding='utf-8-sig')))
     cfg=Config(**{f.name:raw[f.name] for f in fields(Config) if f.name in raw})
     cfg.discord_token=''
     for key in ('whisper_model','wake_model','tts_model','tts_supertonic_model'):
@@ -32,15 +42,19 @@ async def measure(root,candidates,output):
     cfg.validate();local={name.casefold() for name in installed_models(cfg.ollama_host)}
     if not candidates or len(candidates)>12 or any(c['model'].casefold() not in local for c in candidates):
         raise ValueError('Выберите до 12 вариантов установленных локальных моделей.')
+    candidates=[{'model':c['model'],'compute_mode':c.get('compute_mode',cfg.compute_mode)} for c in candidates]
+    for candidate in candidates:compute_settings(candidate['compute_mode'])
+    modes={c['compute_mode'] for c in candidates}
+    metadata={'schema':2,'suite':'synthetic-pipeline-v2',
+              'compute_mode':next(iter(modes)) if len(modes)==1 else None}
     logger=logging.getLogger('calibration');stt=tts=None
     rows=[];speech=[];profile=None
     print('Подготовка распознавания и голоса; бот должен быть остановлен.',flush=True)
     try:
-        for index,candidate in enumerate(sorted(candidates,key=lambda c:c['resource_level'])):
-            print(f"{index+1}/{len(candidates)}: {candidate['model']} · ресурсы {candidate['resource_level']}",flush=True)
-            options=resource_settings(candidate['resource_level'])
-            for key,value in options.items():setattr(cfg,key,value)
-            if profile!=candidate['resource_level']:
+        for index,candidate in enumerate(sorted(candidates,key=lambda c:c['compute_mode'])):
+            print(f"{index+1}/{len(candidates)}: {candidate['model']} · ускорение {candidate['compute_mode']}",flush=True)
+            options=apply_candidate(cfg,candidate)
+            if profile!=candidate['compute_mode']:
                 import gc
                 if stt:stt.close();stt.model=None;stt=None
                 if tts:tts.close();tts.voice=None;tts=None
@@ -53,7 +67,7 @@ async def measure(root,candidates,output):
                     audio=resample_poly(mono,1,3).astype('<i2').tobytes()
                     start=time.perf_counter();recognized=await stt.transcribe(audio,active=True)
                     speech.append((name,prompt,recognized,expected,(time.perf_counter()-start)*1000))
-                profile=candidate['resource_level']
+                profile=candidate['compute_mode']
             cfg.ollama_model=candidate['model'];cfg.ollama_reasoning=False
             service=OllamaService(logger,cfg);cases=[]
             try:
@@ -76,14 +90,15 @@ async def measure(root,candidates,output):
                 row={**candidate,'passed':sum(c['pass'] for c in cases),'total':len(cases),
                      'first_pcm_ms':round(statistics.median(c['first_pcm_ms'] for c in cases),1),
                      'applied_resources':dict(options),'cases':cases}
-            except Exception as error:row={**candidate,'error':type(error).__name__,'passed':0,'total':len(cases)}
+            except Exception as error:row={**candidate,'applied_resources':dict(options),
+                                           'error':type(error).__name__,'passed':0,'total':len(cases)}
             finally:
                 try:await service.client.post('/api/generate',json={'model':candidate['model'],'keep_alive':0})
                 except Exception:pass
                 await service.close()
             rows.append(row)
-            atomic_json(output,{'complete':False,'rows':rows})
-        report={'complete':True,'created':time.time(),'rows':rows,'recommendation':choose_recommendation(rows),
+            atomic_json(output,{**metadata,'complete':False,'rows':rows})
+        report={**metadata,'complete':True,'created':time.time(),'rows':rows,'recommendation':choose_recommendation(rows),
                 'conditions':'4 синтетические озвученные фразы; распознавание замерено один раз, ответы дважды. Whisper остаётся в памяти. Загрузка модели исключена; задержка endpoint включена. Без личной персоны/истории и без сетевой передачи Discord. Это не гарантия задержки живого разговора.'}
         atomic_json(output,report)
     finally:

@@ -151,17 +151,17 @@ class WindowTests(unittest.TestCase):
         self.window.remember_channel.setChecked(False)
         self.assertEqual(self.window.profile.settings()['auto_join_channel_id'],0)
 
-    def test_resource_slider_and_model_are_saved_separately_from_speech_speed(self):
+    def test_compute_mode_and_model_are_saved_separately_from_speech_speed(self):
         self.window.installed_model_names=['huihui_ai/qwen3-abliterated:4b','huihui_ai/qwen3-abliterated:8b']
         self.window.populate_models(self.window.installed_model_names,'huihui_ai/qwen3-abliterated:4b')
-        self.assertIsInstance(self.window.resource_slider,QSlider)
-        self.window.resource_slider.setValue(40)
+        self.assertFalse(self.window.findChildren(QSlider))
+        self.window.compute_choice.setCurrentIndex(self.window.compute_choice.findData('cpu'))
         self.window.speed.setValue(1.06)
         self.window.save_settings()
         cfg=self.window.profile.settings()
         self.assertEqual(cfg['ollama_model'],'huihui_ai/qwen3-abliterated:4b')
         self.assertEqual(cfg['response_profile'],'custom');self.assertEqual(cfg['tts_speed'],1.06)
-        self.assertEqual(cfg['resource_level'],40)
+        self.assertEqual(cfg['compute_mode'],'cpu');self.assertEqual(cfg['ollama_num_gpu'],0)
 
     def test_installed_download_is_disabled_and_guarded(self):
         name=self.window.model_download.itemData(0)
@@ -180,28 +180,28 @@ class WindowTests(unittest.TestCase):
         name='huihui_ai/qwen3-abliterated:8b'
         self.window.accept_model_inventory([{'name':name,'size':5*1024**3,
             'details':{'parameter_size':'8.2B','quantization_level':'Q4_K_M'}}],name)
-        self.assertIn('Qwen 3 · 8B',self.window.model_choice.currentText())
+        self.assertIn('Qwen 3 8B',self.window.model_choice.currentText())
         self.assertIn('5.00 ГиБ',self.window.model_choice.currentText())
         self.assertNotIn('huihui_ai',self.window.model_choice.currentText())
         self.assertEqual(self.window.model_choice.toolTip(),name)
-        self.assertIn('8.2B',self.window.model_detail.text())
-        self.assertIn('Q4_K_M',self.window.model_detail.text())
+        self.assertIn('8.2B',self.window.model_spec.text())
+        self.assertIn('Q4_K_M',self.window.model_spec.text())
         self.assertNotIn('huihui_ai',self.window.model_download.itemText(0))
 
     def test_saved_benchmark_is_shown_only_for_matching_model_and_resources(self):
         import json
         name='huihui_ai/qwen3-abliterated:8b'
         self.window.populate_models([name,'huihui_ai/qwen3-abliterated:4b'],name)
-        self.window.resource_slider.setValue(70)
+        self.window.compute_choice.setCurrentIndex(self.window.compute_choice.findData('auto'))
         reports=self.window.profile.root/'reports';reports.mkdir(exist_ok=True)
-        (reports/'model-benchmark.json').write_text(json.dumps({'model':name,'resource_level':70,
-            'suite':'synthetic-exact-v1','created_utc':'2026-10-24T12:00:00Z'}),encoding='utf-8')
+        (reports/'model-benchmark.json').write_text(json.dumps({'model':name,'compute_mode':'auto',
+            'suite':'synthetic-exact-v2','created_utc':'2026-10-24T12:00:00Z'}),encoding='utf-8')
         with patch('desktop.model_benchmark.format_report',return_value='8/8 verified'):
             self.window.load_saved_benchmark()
             self.assertIn('8/8 verified',self.window.benchmark_result.toPlainText())
-            self.window.resource_slider.setValue(40)
+            self.window.compute_choice.setCurrentIndex(self.window.compute_choice.findData('cpu'))
             self.assertNotIn('8/8 verified',self.window.benchmark_result.toPlainText())
-            self.window.resource_slider.setValue(70)
+            self.window.compute_choice.setCurrentIndex(self.window.compute_choice.findData('auto'))
             self.assertIn('8/8 verified',self.window.benchmark_result.toPlainText())
             self.window.model_choice.setCurrentIndex(self.window.model_choice.findData('huihui_ai/qwen3-abliterated:4b'))
             self.assertNotIn('8/8 verified',self.window.benchmark_result.toPlainText())
@@ -359,60 +359,31 @@ class WindowTests(unittest.TestCase):
         self.window.speed.setValue(1.23);self.window.save_settings()
         self.assertEqual(self.window.profile.settings()['tts_speed'],1.23)
 
-    def test_save_preserves_resource_overrides_when_slider_is_untouched(self):
-        import json
+    def test_legacy_partial_offload_migrates_without_changing_speech(self):
         from desktop.storage import atomic_json
-        cases=[{'resource_level':70,'ollama_num_gpu':-1,'ollama_num_thread':4,
-                'whisper_cpu_threads':4,'tts_cpu_threads':4},
-               {'resource_level':70,'ollama_num_gpu':15,'ollama_num_thread':3,
-                'whisper_cpu_threads':5,'tts_cpu_threads':2}]
-        for original in cases:
-            with self.subTest(original=original):
-                atomic_json(self.window.profile.root/'config.json',original)
-                self.window.reload_forms();self.window.volume.setValue(0.9)
-                with patch('bot.config.os.cpu_count',return_value=16):self.window.save_settings()
-                saved=json.loads((self.window.profile.root/'config.json').read_text(encoding='utf-8'))
-                self.assertEqual({key:saved[key] for key in original},original)
+        atomic_json(self.window.profile.root/'config.json',{'resource_level':50,
+            'ollama_num_gpu':25,'ollama_num_thread':8,'tts_speed':1.14,'tts_volume':0.9})
+        self.window.reload_forms();self.window.save_settings()
+        saved=self.window.profile.settings()
+        self.assertEqual(saved['compute_mode'],'auto');self.assertEqual(saved['ollama_num_gpu'],-1)
+        self.assertEqual(saved['tts_speed'],1.14);self.assertEqual(saved['tts_volume'],0.9)
 
-    def test_changed_resource_slider_applies_mapping_once(self):
-        import json
-        from desktop.storage import atomic_json
-        atomic_json(self.window.profile.root/'config.json',{'resource_level':70,
-            'ollama_num_gpu':-1,'ollama_num_thread':4,'whisper_cpu_threads':4,'tts_cpu_threads':4})
-        self.window.reload_forms();self.window.resource_slider.setValue(40)
-        with patch('bot.config.os.cpu_count',return_value=16):self.window.save_settings()
-        expected={'resource_level':40,'ollama_num_gpu':20,'ollama_num_thread':6,
-            'whisper_cpu_threads':6,'tts_cpu_threads':4}
-        saved=json.loads((self.window.profile.root/'config.json').read_text(encoding='utf-8'))
-        self.assertEqual({key:saved[key] for key in expected},expected)
-        # Later ordinary saves preserve the applied budget even on a different CPU.
-        self.window.volume.setValue(1.0)
-        with patch('bot.config.os.cpu_count',return_value=32):self.window.save_settings()
-        saved=json.loads((self.window.profile.root/'config.json').read_text(encoding='utf-8'))
-        self.assertEqual({key:saved[key] for key in expected},expected)
+    def test_cpu_mode_survives_later_voice_save(self):
+        self.window.compute_choice.setCurrentIndex(self.window.compute_choice.findData('cpu'))
+        self.window.save_settings();self.window.volume.setValue(1.0);self.window.save_settings()
+        cfg=self.window.profile.settings()
+        self.assertEqual(cfg['compute_mode'],'cpu');self.assertEqual(cfg['ollama_num_gpu'],0)
+        self.assertEqual(cfg['tts_volume'],1.0)
 
-    def test_resource_description_distinguishes_saved_threads_from_pending_budget(self):
-        from desktop.storage import atomic_json
-        original={'resource_level':70,'ollama_num_gpu':0,'ollama_num_thread':4,
-            'whisper_cpu_threads':3,'tts_cpu_threads':2}
-        atomic_json(self.window.profile.root/'config.json',original)
-        with patch('bot.config.os.cpu_count',return_value=16):
-            self.window.reload_forms()
-            saved=self.window.resource_description.text()
-            self.assertIn('модель: 4 потоков CPU',saved)
-            self.assertIn('распознавание: 3',saved);self.assertIn('синтез: 2',saved)
-            self.assertNotIn('После сохранения',saved)
-            self.window.resource_slider.setValue(40)
-            pending=self.window.resource_description.text()
-            self.assertIn('После сохранения',pending)
-            self.assertIn('модель: 6 потоков CPU',pending)
-            self.window.save_settings()
-            applied=self.window.resource_description.text()
-            self.assertNotIn('После сохранения',applied)
-            self.assertIn('модель: 6 потоков CPU',applied)
-            self.window.resource_slider.setValue(70)
-            self.assertIn('После сохранения',self.window.resource_description.text())
-            self.assertIn('модель: 11 потоков CPU',self.window.resource_description.text())
+    def test_compute_description_explains_cpu_and_gpu_without_percentages(self):
+        self.window.compute_choice.setCurrentIndex(self.window.compute_choice.findData('cpu'))
+        self.assertIn('CPU',self.window.resource_description.text())
+        self.window.save_settings();self.assertEqual(self.window.profile.settings()['ollama_num_gpu'],0)
+        self.window.compute_choice.setCurrentIndex(self.window.compute_choice.findData('auto'))
+        self.assertIn('видеокарту',self.window.resource_description.text())
+        self.assertNotIn('/100',self.window.resource_description.text())
+        self.window.save_settings();self.assertEqual(self.window.profile.settings()['ollama_num_gpu'],-1)
+
     def test_switching_profile_does_not_offer_old_models_or_recommendations(self):
         self.wait_for_jobs()
         self.window.accept_model_inventory([{'name':'synthetic:model','size':1024,'details':{'family':'synthetic'}}])

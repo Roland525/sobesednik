@@ -30,7 +30,8 @@ def format_tuning(report):
     lines=[report.get('conditions','')]
     for row in report.get('rows',[]):
         result=row.get('error') or f"{row['passed']}/{row['total']} · до PCM {row['first_pcm_ms']/1000:.2f} с"
-        lines.append(f"{row['model']} · {row['resource_level']}/100 · {result}")
+        mode={'auto':'Автоматически','cpu':'Только процессор'}.get(row.get('compute_mode'),'режим не указан')
+        lines.append(f"{row['model']} · {mode} · {result}")
     best=report.get('recommendation')
     lines.append('Рекомендация: '+best['model'] if best else 'Подходящий вариант по этим проверкам не найден.')
     return '\n\n'.join(lines)

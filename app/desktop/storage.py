@@ -8,7 +8,7 @@ import time
 import uuid
 import zipfile
 
-from bot.config import Config
+from bot.config import Config, normalize_compute
 
 EDITABLE = {'wake_word', 'bot_name', 'tts_speed', 'tts_volume', 'tts_supertonic_voice',
             'tts_supertonic_steps', 'conversation_mode', 'max_response_chars', 'history_turns',
@@ -17,7 +17,7 @@ EDITABLE = {'wake_word', 'bot_name', 'tts_speed', 'tts_volume', 'tts_supertonic_
             'auto_join_channel_id', 'dota_patch_source_enabled', 'whisper_model', 'ollama_num_gpu',
             'ollama_model', 'response_profile','resource_level','ollama_num_thread','tts_cpu_threads',
             'memory_auto_enabled','listen_conversation'}
-EDITABLE.update({'followup_enabled','interrupt_enabled'})
+EDITABLE.update({'followup_enabled','interrupt_enabled','compute_mode'})
 
 
 def read_shared(path, encoding='utf-8'):
@@ -116,13 +116,15 @@ class Profile:
         path=self.root/'config.json'
         raw=json.loads(read_shared(path,'utf-8-sig')) if path.exists() else {}
         values={k:getattr(Config(),k) for k in EDITABLE}
-        values.update({k:v for k,v in raw.items() if k in EDITABLE})
+        values.update({k:v for k,v in normalize_compute(raw).items() if k in EDITABLE})
         return values
 
     def save_settings(self, patch):
         if set(patch)-EDITABLE: raise ValueError('Недопустимая настройка')
         path=self.root/'config.json'
         raw=json.loads(path.read_text(encoding='utf-8-sig')) if path.exists() else {}
+        # Capture a legacy CPU choice before response profiles replace num_gpu.
+        raw=normalize_compute(raw)
         raw.update(patch)
         if 'response_profile' in patch:
             from bot.config import RESPONSE_PROFILES
@@ -130,6 +132,7 @@ class Profile:
         if 'resource_level' in patch:
             from bot.config import resource_settings
             raw.update(resource_settings(patch['resource_level']))
+        raw=normalize_compute(raw)
         known=Config.__dataclass_fields__
         validated=Config(**{k:v for k,v in raw.items() if k in known})
         validated.validate()

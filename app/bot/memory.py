@@ -139,7 +139,7 @@ def operational_instruction(text):
 
 
 def observation_text(text):
-    """Select durable declarative speech; raw evidence remains attributed."""
+    """Basic safety/completeness checks, not proof that speech is durable."""
     text=re.sub(r'^(?:(?:кстати|слушай|смотри|ну|короче|вообще)[, ]+)+','',str(text).strip(),flags=re.I)
     if (not 2<=len(text.split())<=60 or len(text)>400 or '?' in text
         or operational_instruction(text) or re.search(
@@ -148,7 +148,89 @@ def observation_text(text):
             r'\b(?:неправда|пошутил|шутка|цитирую|хуесос|идиот|дурак)\b|'
             r'\b(?:он|она|они|ты|вы) (?:сказал\w*|говорил\w*|говорит\w*)\b',text,re.I)):
         return ''
-    return text.strip(' .!')
+    value = text.strip(' .!')
+    if (text.rstrip().endswith(('…', '...', ',', ':', ';', '—', '-'))
+        or re.search(r'[.!]\s+|[\r\n]', value)
+        or re.search(r'\b(?:и|а|но|или|что|чтобы|потому|поскольку|хотя|как|когда|если|'
+                     r'я|мы|ты|он|она|они|в|во|на|с|со|к|ко|от|до|для|над|под|по|из|не|очень|после|перед)$', value, re.I)
+        or re.match(r'^(?:как|что|кто|почему|зачем|где|когда|сколько|какой|какая|'
+                    r'скажи|расскажи|запомни|запоминай|давай|привет|здравствуй|всем привет)\b', value, re.I)):
+        return ''
+    return value
+
+
+def automatic_memory_category(text):
+    """Conservative supported Russian forms; unknown speech fails closed.
+
+    A model's category/confidence cannot establish durability or repair missing
+    context. This deliberately misses valid facts outside these common forms;
+    an explicit remember request remains available for them.
+    """
+    body = observation_text(text)
+    if not body:
+        return ''
+    value = normalized(re.sub(r'^(?:(?:поправка|нет|теперь)[,:]?\s*)+', '', body, flags=re.I))
+    if re.search(r'\b(?:буду|будем|собираюсь|хочу|хотим|планирую|планируем|'
+                 r'вечером|ненадолго|потом|пока|сегодняшн\w*)\b', value):
+        return ''
+    name = r'(?!не\b)[a-zа-я]{2,24}(?:[- ][a-zа-я]{2,24})?'
+    if (re.fullmatch(r'(?:меня зовут|зови меня|мое имя)\s*[:—-]?\s*' + name, value)
+        or re.fullmatch(r'меня зовут не ' + name + r',?\s+а\s+' + name, value)
+        or re.fullmatch(r'я\s+([а-я]{2,24})', value)
+            and name_key(value.split()[1]) in set(_ALIASES.values())):
+        return 'identity'
+    # An object must add specific information, rather than "I like it/that".
+    def specific(tail):
+        return bool(tail and not re.fullmatch(
+            r'(?:это|то|так|все|вот (?:это|так)|что-то|что нибудь|ничего|да|нет|тут|там|'
+            r'работать|учиться|играть|жить|много|мало|нормально|хорошо|плохо)', tail))
+
+    match = re.fullmatch(r'я (?:работаю|учусь|по профессии)\s+(.+)', value)
+    if match:
+        tail = match[1]
+        # Working until six/on this task is not an occupation.
+        return 'profile' if specific(tail) and not re.match(r'(?:до|над|после|перед|потому|когда)\b', tail) else ''
+    match = re.fullmatch(r'(?:я (?:очень )?(?:не )?(?:люблю|предпочитаю|увлекаюсь|пользуюсь)|'
+                        r'мне (?:очень )?(?:не )?нравится)\s+(.+)', value)
+    if match:
+        return 'preference' if specific(match[1]) else ''
+    match = re.fullmatch(r'(?:(?:моя )?любимая игра|(?:мой )?любимый цвет|я играю на|'
+                        r'моя машина|я живу в|мой город)\s*(?:это\s+|[:—-]\s*)?(.+)', value)
+    if match and specific(match[1]):
+        return 'profile'
+    if re.fullmatch(r'мне\s+\d{1,3}(?:\s+(?:год|года|лет))?', value):
+        return 'profile'
+    if re.fullmatch(r'у меня (?:есть )?(?:кот|кошка|собака|пес|питомец|машина|компьютер|ноутбук)\b.*', value):
+        return 'profile'
+    if re.fullmatch(r'я в одной команде с\s+' + name, value):
+        return 'profile'
+    # Explicit standing agreements have a concrete action; "agreed then" does not.
+    if re.fullmatch(r'(?:мы )?договорились (?:не )?(?:созваниваться|встречаться|играть|'
+                    r'обсуждать|проверять|перебивать|помогать|писать|присылать)\s+.+', value):
+        return 'agreement'
+    recurrence = r'по (?:понедельникам|вторникам|средам|четвергам|пятницам|субботам|воскресеньям|выходным|утрам|вечерам)|кажд\w+ (?:день|недел\w+|утро|вечер)|обычно'
+    action = r'\b(?:играю|играем|ходим|хожу|бегаю|бегаем|читаю|читаем|занимаюсь|занимаемся|собираемся|тренируюсь|тренируемся|работаю|работаем|созваниваемся)\b'
+    if (re.match(r'^(?:я\b|мы\b|по\b|кажд)', value)
+        and re.search(r'\b(?:' + recurrence + r')\b', value) and re.search(action, value)):
+        return 'routine'
+    # Third-party evidence is still attributed to the speaker and bound to a
+    # known participant by save_observation; never infer a subject from "he".
+    match = re.fullmatch(r'(' + name + r')\s+(?:работает|учится|любит|предпочитает|живет в)\s+(.+)', value)
+    if match and match[1] not in ('он', 'она', 'они', 'ты', 'вы', 'я', 'мы') and specific(match[2]):
+        return 'profile'
+    return ''
+
+
+def automatic_memory_usable(record):
+    """Exclude doubtful raw auto evidence without changing saved data.
+
+    Explicit notes, owner entries and canonical slots retain their semantics.
+    auto:occupation historically combines explicit and automatic input, so it
+    cannot safely be filtered as automatically selected evidence. Accepts dicts
+    and sqlite3.Row records.
+    """
+    raw_auto = record['slot'].startswith(('auto:quote:', 'auto:preference:', 'auto:profile:', 'auto:routine:'))
+    return not raw_auto or bool(automatic_memory_category(record['content']))
 
 
 @dataclass
@@ -233,7 +315,8 @@ class MemoryStore:
         return [self.profile(guild, uid) for uid in sorted(ids)]
 
     def set_name(self, guild, target, source, name):
-        if not re.fullmatch(r'[A-Za-zА-Яа-яЁё]{2,24}(?:[- ][A-Za-zА-Яа-яЁё]{2,24})?', name):
+        if (re.match(r'не(?:\s|$)', normalized(name))
+            or not re.fullmatch(r'[A-Za-zА-Яа-яЁё]{2,24}(?:[- ][A-Za-zА-Яа-яЁё]{2,24})?', name)):
             return False
         existing = self.profile(guild, target)
         if not existing:
@@ -314,9 +397,11 @@ class MemoryStore:
                 'retrieved':bool(data['notes'] or any(p['real_name'] for p in data['people'])),
                 'explanation':'Проверка поиска актуальных сведений; это не ответ, сгенерированный моделью.'}
 
-    def observe(self, guild, uid, nick, text, username=''):
+    def observe(self, guild, uid, nick, text, username='', *, explicit=False):
         """Only clear personal slots; never persist the complete transcript."""
         self.register(guild, uid, nick, username)
+        if not explicit and not automatic_memory_category(text):
+            return ''
         text = self.clean(text, 700).strip(' .!')
         if text.endswith('?'):
             return ''
@@ -341,12 +426,13 @@ class MemoryStore:
         self.register(guild,uid,nick,username)
         text=re.sub(r'^теперь\s+(?=я\s)','',text,flags=re.I)
         body=observation_text(self.clean(text,700))
-        if not body: return ''
+        category=automatic_memory_category(body)
+        if not category: return ''
         learned=self.observe(guild,uid,nick,body,username)
         if learned: return learned
         slot=''
         if re.match(r'^я (?:работаю|учусь|по профессии)\b',body,re.I): slot='auto:occupation'
-        elif re.match(r'^(?:я (?:очень )?(?:не )?(?:люблю|предпочитаю|увлекаюсь|пользуюсь)|мне (?:очень )?нравится)\b',body,re.I):
+        elif category=='preference':
             slot='auto:preference:'+hashlib.sha256(normalized(body).encode()).hexdigest()[:20]
         elif re.match(r'^у меня (?:есть )?(?:кот|кошка|собака|п[её]с|питомец|машина|компьютер|ноутбук)\b',body,re.I):
             slot='auto:profile:'+hashlib.sha256(normalized(body).encode()).hexdigest()[:20]
@@ -358,7 +444,8 @@ class MemoryStore:
     def save_observation(self,guild,uid,nick,original,quote,category):
         if category not in ('identity','preference','routine','profile','agreement'): return False
         evidence=observation_text(original)
-        if not isinstance(quote,str) or not evidence or normalized(quote)!=normalized(evidence): return False
+        if not isinstance(quote,str) or not evidence or normalized(quote)!=normalized(original): return False
+        if not automatic_memory_category(original): return False
         body=observation_text(quote)
         if not body or self.clean(body)!=body: return False
         if self.observe_auto(guild,uid,nick,body): return True
@@ -366,8 +453,11 @@ class MemoryStore:
         slot='auto:quote:'+hashlib.sha256(normalized(body).encode()).hexdigest()[:20]
         mentioned=self.mentioned(guild,body)
         first_person=bool(re.match(r'^(?:я|мне|меня|мой|моя|мо[её]|мои|у меня)\b',body,re.I))
+        third_person=re.fullmatch(r'[A-Za-zА-Яа-яЁё]{2,24}(?:[- ][A-Za-zА-Яа-яЁё]{2,24})?\s+'
+                                  r'(?:работает|учится|любит|предпочитает|жив[её]т в)\s+.+',body,re.I)
+        if third_person and not first_person and len(mentioned)!=1: return False
         target=next(iter(mentioned)) if len(mentioned)==1 and not first_person else uid
-        return self.save(guild,uid,slot,body,target=target)
+        return self.save(guild,uid,slot,original.strip(),target=target)
 
     def _unclear_person(self, matches):
         if matches:
@@ -503,7 +593,7 @@ class MemoryStore:
                     preview = '; '.join(re.sub(r'^Запомнил[:.]?\s*', '', reply).rstrip('.') for reply in results)
                     return MemoryResult('Запомнил ' + str(len(parts)) + ' факта: ' + preview[:220] + ('.' if len(preview) <= 220 else '…'))
                 return MemoryResult(' '.join(results)[:400])
-        learned = self.observe(guild, uid, nick, body)
+        learned = self.observe(guild, uid, nick, body, explicit=explicit)
         if learned:
             return MemoryResult(learned)
         pending_person = self.pending_person(guild, uid, body) if not explicit else None
@@ -604,10 +694,10 @@ class MemoryStore:
             return ''
         terms = search_terms(value) - {'говорил', 'рассказывал', 'день', 'часто'}
         candidates = []
-        for row in self.db.execute("SELECT content FROM notes WHERE guild=? AND source=? AND target=? AND kind='fact'",
+        for row in self.db.execute("SELECT slot,content FROM notes WHERE guild=? AND source=? AND target=? AND kind='fact'",
                                    (guild, uid, uid)):
             content = row['content']
-            if operational_instruction(content):
+            if not automatic_memory_usable(row) or operational_instruction(content):
                 continue
             score = len(terms & search_terms(content))
             if score >= 2:
@@ -635,8 +725,8 @@ class MemoryStore:
         terms = search_terms(text)
         aliases = {name_key(word) for word in re.findall(r'\w+', normalized(text))} & set(_ALIASES.values())
         rows = [row for row in self.db.execute('SELECT * FROM notes WHERE guild=? ORDER BY updated DESC', (guild,))
-                if row['source'] == uid or row['target'] in ids or row['alias'] in aliases
-                or row['source']==0 and bool(terms & search_terms(row['content']))]
+                if automatic_memory_usable(row) and (row['source'] == uid or row['target'] in ids or row['alias'] in aliases
+                or row['source']==0 and bool(terms & search_terms(row['content'])))]
         indexed = [(row, search_terms(row['content'])) for row in rows]
         counts = Counter(term for _, words in indexed for term in words)
         focus = relevant - {uid}

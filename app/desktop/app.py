@@ -6,10 +6,10 @@ import sys
 import threading
 import time
 
-from PySide6.QtCore import QThread,Signal,QTimer,QUrl,QLockFile,Qt
+from PySide6.QtCore import QThread,Signal,QTimer,QUrl,QLockFile,Qt,QPropertyAnimation,QEasingCurve
 from PySide6.QtGui import QDesktopServices,QIcon,QPixmap
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QHBoxLayout,QVBoxLayout,
-    QFrame,QListWidget,QStackedWidget,QComboBox,QMessageBox,QFileDialog,QTableWidgetItem)
+    QFrame,QListWidget,QStackedWidget,QComboBox,QMessageBox,QFileDialog,QTableWidgetItem,QGraphicsOpacityEffect)
 
 from .credentials import save_token,load_token
 from .discord_api import PORTAL,bot_account,invite_url
@@ -20,7 +20,7 @@ from .storage import Profile,default_root,install_payload,atomic_json,redact,rea
 from .style import STYLE
 from .views import Views
 from .quality import QualityControls
-from .widgets import label,row,WaveMark
+from .widgets import label,row,WaveMark,NoticeBanner,animations_enabled,NoWheelComboBox as QComboBox
 from .version import VERSION
 
 REPOSITORY='https://github.com/Roland525/sobesednik'
@@ -67,11 +67,11 @@ class MainWindow(QMainWindow,Views,QualityControls):
         icon=self.payload.parent/'icon.png'
         if icon.exists(): self.setWindowIcon(QIcon(str(icon)))
         self.jobs=[]; self.busy=False; self.cancel=threading.Event(); self.force_close=False
-        self.close_requested=False; self.resource_pending=False; self.memory_pending=False
+        self.close_requested=False; self.resource_pending=False; self.memory_pending=False;self.awaiting_ready=False
         self.memory_reload=False; self.loaded_memory_key=None; self.last_memory_guild=None
         self.state={}; self.guilds=[]; self.memory_data=[]; self.token=''; self.account=None
         self.available_update=None; self.update_check_pending=False; self.updating=False
-        self.model_downloading=False;self.benchmark_running=False
+        self.model_downloading=False;self.benchmark_running=False;self.tuning_running=False
         self.setWindowTitle('Собеседник — панель управления'); self.resize(1220,870); self.setMinimumSize(1040,720)
         self.setStyleSheet(STYLE)
         if self.payload.exists() and not self.runtime.running(): install_payload(self.payload,self.profile.root)
@@ -93,7 +93,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
         content=QWidget(); content_layout=QVBoxLayout(content); content_layout.setContentsMargins(30,22,26,20); content_layout.setSpacing(17)
         self.guild_box=QComboBox(); self.guild_box.setMinimumWidth(230); self.guild_box.addItem('Сервер появится после запуска','')
         self.status_label=label('Остановлен','status',False)
-        content_layout.addWidget(row(label('ПАНЕЛЬ УПРАВЛЕНИЯ','eyebrow'),None,self.guild_box,self.status_label))
+        content_layout.addWidget(row(None,self.guild_box,self.status_label))
         self.update_banner=QFrame(); self.update_banner.setObjectName('card')
         update_layout=QVBoxLayout(self.update_banner); update_layout.setContentsMargins(18,14,18,14)
         self.update_text=label('','subtitle'); update_layout.addWidget(self.update_text)
@@ -103,11 +103,16 @@ class MainWindow(QMainWindow,Views,QualityControls):
         from PySide6.QtWidgets import QProgressBar
         self.update_progress=QProgressBar(); self.update_progress.setRange(0,100); self.update_progress.hide()
         update_layout.addWidget(self.update_progress); self.update_banner.hide(); content_layout.addWidget(self.update_banner)
-        self.notice_label=label('','notice'); self.notice_label.hide(); content_layout.addWidget(self.notice_label)
+        self.notice_banner=NoticeBanner();self.notice_label=self.notice_banner.message
+        content_layout.addWidget(self.notice_banner)
         self.pages=QStackedWidget()
         for build in [self.overview_view,self.discord_view,self.settings_view,self.persona_view,self.memory_view,self.logs_view]:
             self.pages.addWidget(build())
         content_layout.addWidget(self.pages,1); outer.addWidget(content,1); self.setCentralWidget(central)
+        self.page_opacity=QGraphicsOpacityEffect(self.pages);self.pages.setGraphicsEffect(self.page_opacity)
+        self.page_animation=QPropertyAnimation(self.page_opacity,b'opacity',self)
+        self.page_animation.setDuration(150);self.page_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self.pages.currentChanged.connect(self.animate_navigation)
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex); self.navigation.setCurrentRow(0)
         self.guild_box.currentIndexChanged.connect(self.guild_changed)
         self.navigation.currentRowChanged.connect(self.page_changed)
@@ -138,8 +143,15 @@ class MainWindow(QMainWindow,Views,QualityControls):
                     result['shown']=True; atomic_json(report,result)
             except (OSError,ValueError): pass
 
-    def notice(self,text):
-        self.notice_label.setText(redact(text,self.token)); self.notice_label.setVisible(bool(text))
+    def notice(self,text,persistent=False):
+        if text:self.notice_banner.show_message(redact(text,self.token),timeout_ms=0 if persistent else 6500)
+        else:self.notice_banner.hide_message()
+
+    def animate_navigation(self,*args):
+        self.page_animation.stop()
+        if self.isVisible() and animations_enabled():
+            self.page_animation.setStartValue(.88);self.page_animation.setEndValue(1.0);self.page_animation.start()
+        else:self.page_opacity.setOpacity(1.0)
 
     def run_job(self,function,done=None,operation=True):
         if operation and self.busy:
@@ -149,6 +161,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
         task=Task(function,self.token,self); self.jobs.append(task)
         task.progress.connect(self.install_update)
         def failed(message):
+            if operation:self.awaiting_ready=False
             self.notice(message)
             if self.cancel_install.isEnabled():
                 self.install_update(self.install_progress.value(),'Ошибка',message)
@@ -246,8 +259,8 @@ class MainWindow(QMainWindow,Views,QualityControls):
             if installed!=self.last_install_state:
                 self.maintenance.setExpanded(not installed);self.last_install_state=installed
             self.populate_models(getattr(self,'installed_model_names',[]),cfg['ollama_model'])
-            self.loaded_resource_level=cfg.get('resource_level',70)
-            self.resource_slider.setValue(self.loaded_resource_level);self.resource_level_changed()
+            self.compute_choice.setCurrentIndex(max(0,self.compute_choice.findData(cfg.get('compute_mode','auto'))))
+            self.compute_mode_changed()
             self.bot_name_input.setText(cfg['bot_name']); self.voice_choice.setCurrentText(cfg['tts_supertonic_voice'])
             self.applied_identity=(cfg['bot_name'],cfg['wake_word'])
             self.identity_status.setText('В голосе: «'+cfg['wake_word']+'». Ник на сервере: '+cfg['bot_name']+'.')
@@ -262,6 +275,8 @@ class MainWindow(QMainWindow,Views,QualityControls):
             self.remember_channel.setChecked(bool(cfg['auto_join_channel_id']))
             self.remember_channel.blockSignals(False)
             self.persona_edit.setPlainText(self.profile.persona()); self.folder_label.setText(str(self.profile.root))
+            self.custom_persona_draft=self.persona_edit.toPlainText();self.persona_selection='custom'
+            self.persona_preset.blockSignals(True);self.persona_preset.setCurrentIndex(0);self.persona_preset.blockSignals(False)
             self.token_status.setText(('Защищённый токен сохранён' if (self.profile.root/'discord-token.bin').exists()
                 else 'Найден токен прежней установки. Можно проверить и защитить его здесь.') if self.token else 'Токен ещё не сохранён')
             self.listen_conversation.setChecked(cfg.get('listen_conversation',True))
@@ -315,6 +330,13 @@ class MainWindow(QMainWindow,Views,QualityControls):
 
     def refresh(self):
         self.state=self.protocol.status(); running=self.runtime.running()
+        if self.awaiting_ready:
+            if self.state.get('services_error'):
+                self.awaiting_ready=False;self.notice('Не удалось подготовить голос. Откройте диагностику: '+str(self.state['services_error']))
+            elif self.state.get('ready') and self.state.get('services_ready',True):
+                self.awaiting_ready=False;self.notice('Бот готов к разговору. Настройки применены.')
+            elif not running and not self.busy:
+                self.awaiting_ready=False;self.notice('Запуск не завершился. Проверьте журнал в разделе «Диагностика».')
         self.refresh_errand()
         if self.pages.currentIndex()==5:self.refresh_diagnostics()
         self.status_label.setText('В Discord' if self.state.get('ready') else 'Подключается…' if running else 'Остановлен')
@@ -328,6 +350,9 @@ class MainWindow(QMainWindow,Views,QualityControls):
         self.learning_install.setEnabled(not running and not self.busy and self.runtime.installed())
         self.model_cancel.setEnabled(self.model_downloading)
         self.benchmark_cancel.setEnabled(self.benchmark_running)
+        self.tune_button.setEnabled(not running and not self.busy and bool(getattr(self,'installed_model_names',[])))
+        self.tune_button.setText('Сравниваем модели…' if self.tuning_running else 'Подобрать настройки')
+        self.tune_cancel.setEnabled(self.tuning_running)
         self.update_model_actions()
         self.update_button.setEnabled(bool(self.available_update) and not self.busy and not self.updating)
         if self.state: self.update_guilds(self.state.get('guilds',[]))
@@ -347,6 +372,13 @@ class MainWindow(QMainWindow,Views,QualityControls):
         metrics=self.state.get('sessions',{}).get(str(self.guild_id()),{}).get('metrics',{})
         latency=metrics.get('first_playback_ms')
         if isinstance(latency,(int,float)): self.latency_card.update_value(f'{latency/1000:.1f} с','Последний ответ · не среднее')
+        if isinstance(latency,(int,float)):
+            def seconds(key):
+                value=metrics.get(key)
+                return f'{value/1000:.2f} с' if isinstance(value,(int,float)) else '—'
+            self.pipeline_latency.setText(f'Последний ответ начался через {latency/1000:.2f} с. '
+                f'Распознавание: {seconds("stt_ms")} · модель: {seconds("llm_first_sentence_ms")} · озвучка: {seconds("tts_ms")}.')
+            self.pipeline_latency.setToolTip('Фактический последний ответ, не обещание скорости. Этапы могут пересекаться; их времена не складываются.')
 
     def refresh_resources(self):
         if self.resource_pending or self.close_requested: return
@@ -364,22 +396,38 @@ class MainWindow(QMainWindow,Views,QualityControls):
             if self.close_requested: QTimer.singleShot(50,self.close)
         task.finished.connect(finish); task.start()
 
-    def start_bot(self): self.run_job(lambda _:self.runtime.start(),lambda _:self.notice('Запуск начался. Первичная загрузка моделей может занять до минуты.'))
+    def start_bot(self):
+        if self.busy:self.notice('Дождитесь текущей операции.');return
+        self.awaiting_ready=False;self.notice('Подключаем бота и готовим голос…',persistent=True)
+        self.run_job(lambda _:self.runtime.start(),lambda _:setattr(self,'awaiting_ready',True))
     def stop_bot(self): self.run_job(lambda _:self.runtime.stop(),lambda _:self.notice('Бот остановлен.'))
     def restart_bot(self):
+        if self.busy:self.notice('Дождитесь текущей операции.');return
+        self.awaiting_ready=False;self.notice('Перезапускаем бота. Ждём подключения и готовности голоса…',persistent=True)
         def restart(_):
             status=self.protocol.status()
             channel=next((int(g['connected_channel']) for g in status.get('guilds',[]) if g.get('connected_channel')),0)
             self.runtime.stop(); self.runtime.start(resume_channel=channel)
-        self.run_job(restart,lambda _:self.notice('Бот перезапускается с сохранёнными настройками.'))
+        self.run_job(restart,lambda _:setattr(self,'awaiting_ready',True))
 
     def install_update(self,percent,title,line):
-        if title=='Автоподбор':self.tune_result.setPlainText(line);return
+        if title=='Автоподбор':
+            self.tune_result.setPlainText(line)
+            import re
+            match=re.match(r'(\d+)/(\d+)',line)
+            if match:self.tune_progress.setRange(0,int(match[2]));self.tune_progress.setValue(int(match[1])-1)
+            else:self.tune_progress.setRange(0,0)
+            return
         if title in ('Обновление приложения','Установка обновления'):
             self.update_progress.setValue(percent); self.update_text.setText(line)
             if title=='Установка обновления': self.update_cancel.hide()
             return
-        if title=='Проверка модели':self.benchmark_result.setPlainText(line);return
+        if title=='Проверка модели':
+            self.benchmark_result.setPlainText(line)
+            import re
+            match=re.match(r'(\d+)/(\d+)',line)
+            if match:self.benchmark_progress.setRange(0,int(match[2]));self.benchmark_progress.setValue(int(match[1]))
+            return
         self.install_progress.setValue(percent); self.install_stage.setText(title)
         if title=='Загрузка модели':
             self.model_progress.setValue(percent); self.model_status.setText(line)
@@ -407,8 +455,6 @@ class MainWindow(QMainWindow,Views,QualityControls):
     def save_settings(self,restart=False):
         try:
             model=self.model_choice.currentData()
-            level=self.resource_slider.value()
-            resource_patch={'resource_level':level} if level!=getattr(self,'loaded_resource_level',level) else {}
             # The two-decimal controls must not round an untouched file value.
             voice_values={}
             for key,widget in [('tts_speed',self.speed),('tts_volume',self.volume)]:
@@ -419,7 +465,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
             if model!=self.profile.settings()['ollama_model'] and model.casefold() not in {
                     item.casefold() for item in getattr(self,'installed_model_names',[])}:
                 raise ValueError('Сначала скачайте модель и обновите список.')
-            self.profile.save_settings({'ollama_model':model,'response_profile':'custom',**resource_patch,
+            self.profile.save_settings({'ollama_model':model,'response_profile':'custom','compute_mode':self.compute_choice.currentData(),
                 'tts_supertonic_voice':self.voice_choice.currentText(),**voice_values,
                 'conversation_mode':self.mode_choice.currentData(),
                 'max_response_chars':self.length.value(),'history_turns':self.history.value(),
@@ -427,8 +473,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
                 'followup_enabled':self.followup.isChecked(),'interrupt_enabled':self.interrupt.isChecked()})
             self.loaded_voice_values={key:(voice_values[key],widget.value())
                 for key,widget in [('tts_speed',self.speed),('tts_volume',self.volume)]}
-            self.loaded_resource_level=level
-            self.resource_level_changed()
+            self.compute_mode_changed()
             self.notice('Настройки сохранены. Для применения перезапустите бота.')
             if restart and self.runtime.running(): self.restart_bot()
         except Exception as error: self.notice(str(error))
@@ -452,38 +497,39 @@ class MainWindow(QMainWindow,Views,QualityControls):
         from .models import model_detail
         name=self.model_choice.currentData() or ''
         details=getattr(self,'installed_model_metadata',{}).get(name.casefold(),{})
-        self.model_detail.setText(model_detail(name,getattr(self,'installed_model_sizes',{}).get(name.casefold()),details))
+        self.model_spec.setText(name+'\n'+model_detail(name,getattr(self,'installed_model_sizes',{}).get(name.casefold()),details))
+        if 'instruct' in name.casefold():
+            explanation='Компактная модель для прямых коротких ответов. Instruct — вариант без отдельного режима обдумывания.'
+        elif ':4b' in name.casefold():
+            explanation='Компактная модель: обычно занимает меньше памяти и подходит, если важен быстрый короткий ответ. Качество зависит от вопроса.'
+        elif name.casefold()=='huihui_ai/qwen3-abliterated:8b':
+            explanation='Универсальная модель для обычной беседы. Начните с неё, если памяти компьютера достаточно. Компактную можно попробовать ради скорости.'
+        else:
+            explanation='Дополнительная локальная модель. Сравните ответы и скорость на своём компьютере: номер версии сам по себе не гарантирует лучшего результата.'
+        self.model_detail.setText(explanation)
         self.model_detail.setToolTip(name);self.model_choice.setToolTip(name)
         self.load_saved_benchmark()
 
     def load_saved_benchmark(self):
         if not hasattr(self,'benchmark_result') or self.benchmark_running:return
         from .model_benchmark import format_report,report_key
-        model=self.model_choice.currentData() or '';level=self.resource_slider.value()
-        paths=[self.profile.root/f'reports/model-benchmark-{report_key(model,level)}.json',self.profile.root/'reports/model-benchmark.json']
+        model=self.model_choice.currentData() or '';mode=self.compute_choice.currentData() or 'auto'
+        paths=[self.profile.root/f'reports/model-benchmark-{report_key(model,mode)}.json',self.profile.root/'reports/model-benchmark.json']
         for path in paths:
             try:
                 report=json.loads(path.read_text(encoding='utf-8-sig'))
-                if (report.get('model','').casefold()!=model.casefold() or report.get('resource_level')!=level
-                        or report.get('suite')!='synthetic-exact-v1'):continue
+                if (report.get('model','').casefold()!=model.casefold() or report.get('compute_mode')!=mode
+                        or report.get('suite')!='synthetic-exact-v2'):continue
                 self.benchmark_result.setPlainText('Сохранённый локальный тест · '+str(report.get('created_utc','дата неизвестна'))+'\n'+format_report(report))
                 return
             except (OSError,ValueError,KeyError,TypeError,AttributeError):continue
-        self.benchmark_result.setPlainText('Для этой модели при выбранных ресурсах сохранённого теста пока нет.')
+        self.benchmark_result.setPlainText('Вы ещё не запускали проверку этой модели в выбранном режиме. '
+            'Остановите бота и нажмите «Запустить проверку». Результат сохранится здесь.')
 
-    def resource_level_changed(self,*args):
-        from bot.config import Config,resource_settings
-        value=self.resource_slider.value();pending=value!=getattr(self,'loaded_resource_level',value)
-        if pending:settings=resource_settings(value)
-        else:
-            path=self.profile.root/'config.json'
-            raw=json.loads(read_shared(path,'utf-8-sig')) if path.exists() else {}
-            defaults=Config()
-            settings={key:raw.get(key,getattr(defaults,key)) for key in
-                ('ollama_num_gpu','ollama_num_thread','whisper_cpu_threads','tts_cpu_threads')}
-        layers=settings['ollama_num_gpu']
-        gpu='CPU' if layers==0 else 'Все слои на GPU, если помещаются' if layers==-1 else f'До {layers} слоёв модели на GPU'
-        self.resource_description.setText(('После сохранения · ' if pending else 'Сохранено · ')+f"{value}/100 · модель: {settings['ollama_num_thread']} потоков CPU · распознавание: {settings['whisper_cpu_threads']} · синтез: {settings['tts_cpu_threads']} · {gpu}")
+    def compute_mode_changed(self,*args):
+        auto=self.compute_choice.currentData()!='cpu'
+        self.resource_description.setText('Ollama использует доступную видеокарту; если памяти не хватает, часть работы останется на CPU.' if auto else
+            'Разговорная модель работает на CPU, обычно медленнее. Распознавание речи может использовать видеокарту отдельно.')
         self.load_saved_benchmark()
 
     def update_model_actions(self,*args):
@@ -495,9 +541,12 @@ class MainWindow(QMainWindow,Views,QualityControls):
         self.model_download_button.setEnabled(not already and not self.busy)
         self.model_download.setEnabled(not self.busy)
         if hasattr(self,'benchmark_button'):
-            self.model_choice.setEnabled(not self.benchmark_running);self.resource_slider.setEnabled(not self.benchmark_running)
+            measuring=self.benchmark_running or self.tuning_running
+            self.model_choice.setEnabled(not measuring);self.compute_choice.setEnabled(not measuring)
             self.benchmark_button.setEnabled(not self.busy and not self.runtime.running() and
                 (self.model_choice.currentData() or '').casefold() in installed)
+            self.benchmark_button.setToolTip('Для проверки остановите бота. Она запускает выбранную модель на 8 коротких заданиях.' if self.runtime.running() else
+                'Нажмите «Обновить список», если установленная модель пока не обнаружена.')
 
     def accept_model_inventory(self,items,selected=None):
         names=[item['name'] for item in items]
@@ -541,18 +590,20 @@ class MainWindow(QMainWindow,Views,QualityControls):
         if (model or '').casefold() not in {name.casefold() for name in getattr(self,'installed_model_names',[])}:
             self.notice('Сначала обновите список и выберите установленную модель.');return
         from .model_benchmark import run_benchmark,format_report,report_key
-        cfg=self.profile.settings();cfg.update(ollama_model=model,resource_level=self.resource_slider.value(),
+        cfg=self.profile.settings();cfg.update(ollama_model=model,compute_mode=self.compute_choice.currentData(),
             ollama_reasoning=self.reasoning.isChecked())
-        self.benchmark_result.setPlainText('Проверка запускается… Используются текущие значения ползунка и выбранная модель.')
+        self.benchmark_result.setPlainText('Проверка запускается. Готовим выбранную модель…')
+        self.benchmark_progress.setRange(0,8);self.benchmark_progress.setValue(0)
         self.benchmark_running=True
         def measure(task):
             self.runtime.ensure_ollama(self.cancel)
             return run_benchmark(cfg,self.cancel,lambda text:task.progress.emit(0,'Проверка модели',text))
         def done(report):
-            key=report_key(model,cfg['resource_level'])
+            key=report_key(model,cfg['compute_mode'])
             atomic_json(self.profile.root/f'reports/model-benchmark-{key}.json',report)
             atomic_json(self.profile.root/'reports/model-benchmark.json',report)
             self.benchmark_result.setPlainText(format_report(report))
+            self.benchmark_progress.setValue(8)
             self.notice('Локальный тест завершён. Полный отчёт: reports/model-benchmark.json.')
         task=self.run_job(measure,done)
         if task:
@@ -599,6 +650,13 @@ class MainWindow(QMainWindow,Views,QualityControls):
     def save_persona(self):
         try: self.profile.save_persona(self.persona_edit.toPlainText()); self.notice('Персона сохранена. Новые вопросы используют обновлённое описание.')
         except Exception as error: self.notice(str(error))
+
+    def preview_persona_preset(self,*args):
+        from .personas import PRESETS
+        selected=self.persona_preset.currentData()
+        if getattr(self,'persona_selection','custom')=='custom':self.custom_persona_draft=self.persona_edit.toPlainText()
+        self.persona_edit.setPlainText(getattr(self,'custom_persona_draft',self.profile.persona()) if selected=='custom' else PRESETS[selected])
+        self.persona_selection=selected
 
     def save_identity(self):
         try:
@@ -681,6 +739,8 @@ class MainWindow(QMainWindow,Views,QualityControls):
         self.state={}; self.guilds=[]; self.last_memory_guild=None
         self.turn_signature=None; self.refresh_diagnostics(); self.refresh_errand()
         self.latency_card.update_value('—','Ответов в этом профиле пока нет')
+        self.pipeline_latency.setText('Время последнего ответа появится после разговора: распознавание → модель → озвучка.')
+        self.awaiting_ready=False;self.notice('')
         self.memory_data=[]; self.loaded_memory_key=None; self.update_guilds([])
 
     def command(self,operation,payload=None):
@@ -770,9 +830,13 @@ class MainWindow(QMainWindow,Views,QualityControls):
     def fill_memory(self,kind=None):
         kind=kind or self.memory_kind.currentData(); self.memory_table.setRowCount(0)
         for record in self.memory_data:
+            review=False
             if kind=='notes':
+                from bot.memory import automatic_memory_usable
+                review=bool(record.get('slot','').startswith('auto:') and not automatic_memory_usable(record))
+                caption='Проверьте запись' if review else {'fact':'Сведения','banter':'Подкол по просьбе'}.get(record['kind'],record['kind'])
                 date=time.strftime('%d.%m.%Y %H:%M',time.localtime(record['updated']))
-                values=[record['target_name'],record['content'],record['author_name'],date,record['kind']]
+                values=[record['target_name'],record['content'],record['author_name'],date,caption]
             elif kind=='people': values=[record['nick'],record['username']+
                 ('\nИмена: '+record['remembered_names'] if record.get('remembered_names') else ''),str(record['uid']),'', 'Участник']
             else:
@@ -781,6 +845,9 @@ class MainWindow(QMainWindow,Views,QualityControls):
             index=self.memory_table.rowCount(); self.memory_table.insertRow(index)
             for column,value in enumerate(values):
                 item=QTableWidgetItem(redact(str(value),self.token)); item.setToolTip(item.text()); self.memory_table.setItem(index,column,item)
+                if review and column in (1,4):
+                    item.setToolTip(item.text()+'\n\nСтарая автозапись не прошла проверку законченного устойчивого сведения. '
+                        'Она сохранена для просмотра, но не используется в ответах. При необходимости добавьте точный факт вручную.')
         self.memory_table.resizeRowsToContents()
         empty={'notes':'Пока нет воспоминаний. Ниже можно включить автоматическое запоминание или добавить запись вручную.',
                'people':'Участники появятся после подключения к голосовому каналу.',

@@ -7,7 +7,7 @@ import re
 import statistics
 import time
 
-from bot.config import resource_settings
+from bot.config import compute_settings,normalize_compute
 from .models import installed_models,request
 
 CASES=(
@@ -18,8 +18,10 @@ CASES=(
 )
 
 
-def report_key(model,resource_level):
-    return hashlib.sha256((model+str(resource_level)).encode()).hexdigest()[:12]
+def report_key(model,compute_mode):
+    compute_settings(compute_mode)
+    identity=json.dumps(['synthetic-exact-v2',model.casefold(),compute_mode],ensure_ascii=False)
+    return hashlib.sha256(identity.encode()).hexdigest()[:12]
 
 
 def passes(answer,expected):
@@ -59,7 +61,8 @@ def run_benchmark(cfg,cancel,progress=lambda _:None):
     host='http://127.0.0.1:11434';model=cfg['ollama_model']
     if model.casefold() not in {name.casefold() for name in installed_models(host)}:
         raise ValueError('Для теста разрешена только установленная локальная модель.')
-    resources=resource_settings(cfg.get('resource_level',70))
+    cfg=normalize_compute(cfg)
+    mode=cfg['compute_mode'];resources=compute_settings(mode)
     options={key.removeprefix('ollama_'):resources[key] for key in ('ollama_num_gpu','ollama_num_thread')}
     options.update(num_ctx=4096,num_predict=128,temperature=0,seed=42)
     rows=[]
@@ -74,8 +77,8 @@ def run_benchmark(cfg,cancel,progress=lambda _:None):
     try:
         with request(host,'/api/ps') as response:loaded=json.load(response).get('models',[])
     except (OSError,ValueError):loaded=[]
-    return {'schema':1,'suite':'synthetic-exact-v1','created_utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),
-            'model':model,'resource_level':cfg.get('resource_level',70),'resource_settings':resources,
+    return {'schema':2,'suite':'synthetic-exact-v2','created_utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),
+            'model':model,'compute_mode':mode,'resource_level':cfg.get('resource_level',70),'resource_settings':resources,
             'options':options,'think':False,'cpu':platform.processor(),'logical_cpu_count':os.cpu_count(),
             'system':platform.platform(),'ollama_loaded_models':loaded,
             'passed':sum(row['pass'] for row in rows),'total':len(rows),
@@ -88,10 +91,11 @@ def format_report(report):
         item.get('name','').casefold()==report['model'].casefold()),{})
     gpu_bytes=selected.get('size_vram')
     gpu='неизвестно' if gpu_bytes is None else f'{gpu_bytes/1024**3:.2f} ГиБ'
+    mode='Только процессор' if report['compute_mode']=='cpu' else 'Автоматически · GPU при поддержке Ollama'
     return (f"{report['model']}\nПроверок по точному правилу: {report['passed']}/{report['total']}"
         f" · медиана до первого предложения: {report['median_first_sentence_seconds']:.2f} с\n"
         f"CPU: {report['cpu'] or 'не определён'} · логических потоков: {report['logical_cpu_count']}\n"
-        f"Ресурсы: {report['resource_level']}/100 · потоки модели: {report['options']['num_thread']}"
+        f"Ускорение: {mode} · потоки модели: {report['options']['num_thread']}"
         f" · GPU в Ollama (num_gpu): {report['options']['num_gpu']} · память модели на GPU: {gpu}\n"
         'Обдумывание выключено, temperature=0, seed=42, контекст 4096, максимум 128 токенов. '
         'Отдельного прогрева нет; первая попытка может включать загрузку модели. Распознавание и синтез не измерялись. '

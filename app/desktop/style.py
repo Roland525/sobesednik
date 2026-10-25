@@ -12,6 +12,8 @@ QLabel#sectionTitle { font-size:17px; font-weight:600; background:transparent; }
 QLabel#metric { font-size:27px; font-weight:600; background:transparent; }
 QLabel#status { color:#a5f1d2; background:#1b302c; border:1px solid #31564a; border-radius:13px; padding:7px 13px; }
 QLabel#notice { background:#202c3d; color:#c1d2e9; border:1px solid #34475e; padding:12px; border-radius:8px; }
+QFrame#notice { background:#202c3d; color:#c1d2e9; border:1px solid #34475e; border-radius:8px; }
+QFrame#notice QLabel { background:transparent; border:none; }
 QFrame#card { background:#192230; border:1px solid #2b374a; border-radius:13px; }
 QFrame#hero { background:#1b302f; border:1px solid #375c50; border-radius:15px; }
 QFrame#card QLabel, QFrame#hero QLabel { background:transparent; }

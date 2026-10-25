@@ -8,6 +8,32 @@ import ipaddress
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+def compute_settings(mode):
+    """Canonical runtime resources for the two user-facing compute modes."""
+    if mode not in ('auto', 'cpu'):
+        raise ValueError('Ускорение: автоматически или только процессор')
+    return {'ollama_num_gpu': -1 if mode == 'auto' else 0,
+            'ollama_num_thread': 4 if mode == 'auto' else min(8, max(1, os.cpu_count() or 4)),
+            'whisper_cpu_threads': 4, 'tts_cpu_threads': 4}
+
+
+def normalize_compute(data):
+    """Return migrated settings; an explicit compute mode owns its resources.
+
+    Legacy partial-offload/thread overrides become the canonical mode. Voice,
+    recognition model, persona and all unrelated settings are left intact.
+    Reading a profile never writes this migration back to the user's file.
+    """
+    data = dict(data)
+    mode = data.get('compute_mode')
+    if mode is None:
+        mode = 'cpu' if data.get('resource_level') == 0 or data.get('ollama_num_gpu') == 0 else 'auto'
+    data.update(compute_settings(mode))
+    data['compute_mode'] = mode
+    return data
+
+
 def resource_settings(level):
     """A real CPU thread/offload budget, not a promised GPU utilization rate."""
     if type(level) is not int or not 0<=level<=100: raise ValueError('Ресурсы: от 0 до 100')
@@ -40,6 +66,7 @@ class Config:
     ollama_num_gpu: int = -1
     ollama_num_thread: int = 4
     resource_level: int = 70
+    compute_mode: str = 'auto'
     ollama_num_predict: int = 260
     ollama_temperature: float = 0.4
     ollama_top_p: float = 0.9
@@ -107,6 +134,8 @@ class Config:
         return path if path.is_absolute() else ROOT / path
 
     def validate(self):
+        if self.compute_mode not in ('auto', 'cpu'):
+            raise ValueError('compute_mode: auto или cpu')
         for key,limit in [('bot_name',32),('wake_word',50)]:
             value=getattr(self,key)
             if (not isinstance(value,str) or not 1<=len(value.strip())<=limit
@@ -184,6 +213,7 @@ class Config:
         data = json.loads(path.read_text(encoding='utf-8-sig')) if path.exists() else {}
         if not isinstance(data, dict):
             raise ValueError('config.json должен содержать JSON-объект')
+        data = normalize_compute(data)
         # Old credentials/options stay on disk. No cloud options are used.
         known = {field.name for field in fields(cls)}
         config = cls(**{key: value for key, value in data.items() if key in known})

@@ -11,10 +11,17 @@ CATALOG = (
     ('huihui_ai/qwen3.5-abliterated:4B', 'Qwen 3.5 · 4B · ~3,3 ГБ'),
 )
 
+MODEL_TITLES = {
+    'huihui_ai/qwen3-abliterated:4b-instruct-2507-q4_k_m': 'Быстрые ответы · Qwen 3 4B Instruct',
+    'huihui_ai/qwen3-abliterated:4b': 'Быстрые ответы · Qwen 3 4B',
+    'huihui_ai/qwen3-abliterated:8b': 'Универсальная · Qwen 3 8B',
+    'huihui_ai/qwen3.5-abliterated:9b': 'Дополнительная · Qwen 3.5 9B',
+    'huihui_ai/qwen3.5-abliterated:4b': 'Компактная · Qwen 3.5 4B',
+}
+
 
 def model_title(name):
-    known={key.casefold():title.rsplit(' · ',1)[0] for key,title in CATALOG}
-    if name.casefold() in known:return known[name.casefold()]
+    if name.casefold() in MODEL_TITLES:return MODEL_TITLES[name.casefold()]
     if name.casefold().startswith('sobesednik-learned:'):return 'Собеседник · обученный Qwen 3 · 8B'
     return name.rsplit('/',1)[-1].split(':',1)[0].replace('-',' ').replace('_',' ').capitalize()
 
@@ -27,7 +34,14 @@ def model_detail(name,size=None,details=None):
     estimate=next((title.rsplit(' · ',1)[-1] for key,title in CATALOG if key.casefold()==name.casefold()),'')
     disk=f'Установлено: {size/1024**3:.2f} ГиБ.' if size else f'Загрузка: {estimate} (приблизительно).' if estimate else 'Размер Ollama пока неизвестен.'
     quant=f" Квантизация: {details['quantization_level']}." if details.get('quantization_level') else ''
-    return params+' '+disk+quant+' Для работы нужна дополнительная RAM/VRAM под контекст. Меньше параметров — обычно меньше расход памяти; качество проверяйте локальным тестом.'
+    purpose = (' Компактный вариант для коротких ответов; обычно требует меньше памяти, чем варианты 8B/9B.'
+               if match and float(match[1]) <= 4 else
+               ' Основной вариант для повседневного диалога.'
+               if name.casefold() == 'huihui_ai/qwen3-abliterated:8b' else
+               ' Дополнительный вариант для сравнения на вашем компьютере.')
+    return (params+' '+disk+quant+purpose+
+            ' Для контекста нужна дополнительная оперативная или видеопамять. Скорость зависит от компьютера, '+
+            'длины ответа и размещения модели; проверяйте её локальным тестом. Число параметров не является оценкой интеллекта.')
 
 def valid_model(name):
     return (isinstance(name,str) and bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./:-]{0,160}',name))

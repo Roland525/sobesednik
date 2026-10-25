@@ -8,6 +8,44 @@ import zipfile
 
 
 class DesktopStorageTests(unittest.TestCase):
+    def test_response_profile_does_not_erase_legacy_cpu_only_selection(self):
+        from desktop.storage import Profile
+        with tempfile.TemporaryDirectory() as folder:
+            profile=Profile(folder);path=profile.root/'config.json'
+            path.write_text(json.dumps({'ollama_num_gpu':0,'ollama_model':'private/model:v1'}),encoding='utf-8')
+            profile.save_settings({'response_profile':'fast'})
+            saved=json.loads(path.read_text(encoding='utf-8'))
+            self.assertEqual(saved['compute_mode'],'cpu')
+            self.assertEqual(saved['ollama_num_gpu'],0)
+
+    def test_compute_save_migrates_in_place_and_preserves_voice_persona_and_unknown_models(self):
+        from desktop.storage import Profile
+        with tempfile.TemporaryDirectory() as folder:
+            profile = Profile(folder)
+            raw = {'resource_level': 0, 'ollama_model': 'private/custom:v2',
+                   'tts_speed': 1.12, 'tts_volume': 0.93, 'tts_supertonic_voice': 'M4',
+                   'future_setting': {'keep': True}, 'discord_token': 'preserved-local-value'}
+            path = profile.root/'config.json'
+            path.write_text(json.dumps(raw), encoding='utf-8')
+            (profile.root/'PERSONA.md').write_text('private persona', encoding='utf-8')
+            before = path.read_bytes()
+            self.assertEqual(profile.settings()['compute_mode'], 'cpu')
+            self.assertEqual(path.read_bytes(), before)
+            profile.save_settings({'compute_mode': 'auto', 'response_profile': 'fast'})
+            saved = json.loads(path.read_text(encoding='utf-8'))
+            for key in raw:
+                self.assertEqual(saved[key], raw[key])
+            self.assertEqual(saved['compute_mode'], 'auto')
+            self.assertEqual(saved['ollama_num_gpu'], -1)
+            self.assertEqual(saved['whisper_cpu_threads'], 4)
+            profile.save_settings({'compute_mode': 'cpu', 'response_profile': 'thoughtful'})
+            saved = json.loads(path.read_text(encoding='utf-8'))
+            self.assertEqual(saved['ollama_num_gpu'], 0)
+            self.assertEqual(profile.persona(), 'private persona')
+            before = path.read_bytes()
+            with self.assertRaises(ValueError): profile.save_settings({'compute_mode': 'magic'})
+            self.assertEqual(path.read_bytes(), before)
+
     @unittest.skipUnless(__import__('os').name=='nt','Windows DPAPI')
     def test_token_is_encrypted_and_legacy_files_are_preserved(self):
         from desktop.credentials import save_token,load_token

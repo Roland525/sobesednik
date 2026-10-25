@@ -1,8 +1,9 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLineEdit,QComboBox,
     QDoubleSpinBox,QSpinBox,QCheckBox,QPlainTextEdit,QProgressBar,QTableWidget,QHeaderView,
-    QAbstractItemView,QScrollArea,QSlider,QTabWidget)
-from .widgets import label,button,card,row,MetricCard,Disclosure
+    QAbstractItemView,QScrollArea,QTabWidget)
+from .widgets import (label,button,card,row,MetricCard,Disclosure,
+    NoWheelComboBox as QComboBox,NoWheelSpinBox as QSpinBox,NoWheelDoubleSpinBox as QDoubleSpinBox)
 
 
 def scroll_body():
@@ -101,30 +102,34 @@ class Views:
         for title in ('Голос','Модель','Общение'):
             area,tab_body=scroll_body();self.settings_tabs.addTab(area,title);areas.append(tab_body)
         voice_body,model_body,conversation_body=areas;body=model_body
-        block,layout=card('Модель и ресурсы компьютера')
+        block,layout=card('Как бот готовит ответ')
         form=QFormLayout(); form.setSpacing(15)
         self.model_choice=QComboBox();self.model_choice.setMinimumContentsLength(24)
         self.model_choice.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.model_choice.currentIndexChanged.connect(self.model_selection_changed)
-        form.addRow('Разговорная модель',self.model_choice)
+        form.addRow('Вариант модели',self.model_choice)
         self.model_detail=label('','subtitle');form.addRow(self.model_detail)
-        self.resource_slider=QSlider(Qt.Horizontal); self.resource_slider.setRange(0,100); self.resource_slider.setSingleStep(5)
-        self.resource_slider.setAccessibleName('Ресурсы компьютера')
-        form.addRow('Ресурсы · 0 — экономно, 100 — максимум',self.resource_slider)
+        specifications=Disclosure('Точное имя и технические параметры')
+        self.model_spec=label('','subtitle');specifications.body.addWidget(self.model_spec);form.addRow(specifications)
+        self.compute_choice=QComboBox()
+        self.compute_choice.addItem('Автоматически — использовать видеокарту','auto')
+        self.compute_choice.addItem('Только процессор для подготовки ответов','cpu')
+        self.compute_choice.setAccessibleName('Где работает разговорная модель')
+        form.addRow('Где обрабатывать ответ',self.compute_choice)
         layout.addLayout(form)
         self.resource_description=label('','subtitle');layout.addWidget(self.resource_description)
-        self.resource_slider.valueChanged.connect(self.resource_level_changed)
-        self.resource_help=label('Выше — больше потоков CPU и слоёв модели на GPU. Это бюджет, а не процент загрузки; 100 не гарантирует ускорение. Темп речи — отдельно.','subtitle')
-        self.resource_help.setToolTip('На 0 модель работает на CPU; 1–69 задаёт число слоёв на GPU; 70–100 разрешает все слои на GPU, если модель помещается в видеопамять. Нужны поддержка Ollama и подходящая видеокарта. Ползунок меняет потоки CPU модели, распознавания и синтеза. Больше потоков может замедлить ответ: влияют модель, свободная память, охлаждение и другие программы.')
+        self.compute_choice.currentIndexChanged.connect(self.compute_mode_changed)
+        self.resource_help=label('Начните с автоматического режима. Если ответы долгие, попробуйте компактную модель. Скорость также зависит от распознавания и озвучки; темп произнесения настраивается во вкладке «Голос».','subtitle')
         layout.addWidget(self.resource_help)
+        self.pipeline_latency=label('Время последнего ответа появится после разговора: распознавание → модель → озвучка.','subtitle');layout.addWidget(self.pipeline_latency)
         self.model_status=label('Нажмите «Обновить список», чтобы проверить установленные модели.','subtitle'); layout.addWidget(self.model_status)
         layout.addWidget(row(button('Обновить список',self.refresh_models),None))
         downloads=Disclosure('Добавить модель');layout.addWidget(downloads);download_layout=downloads.body
-        from .models import CATALOG
+        from .models import CATALOG,model_title
         self.model_download=QComboBox()
         self.model_download.setMinimumContentsLength(24);self.model_download.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         for name,title in CATALOG:
-            self.model_download.addItem(title,name);self.model_download.setItemData(self.model_download.count()-1,name,Qt.ToolTipRole)
+            self.model_download.addItem(model_title(name)+' · '+title.rsplit(' · ',1)[-1],name);self.model_download.setItemData(self.model_download.count()-1,name,Qt.ToolTipRole)
         self.model_cancel=button('Отменить загрузку',self.cancel_operation); self.model_cancel.setEnabled(False)
         self.model_download_button=button('Скачать модель',self.download_model,True)
         self.model_download.currentIndexChanged.connect(self.update_model_actions)
@@ -132,14 +137,17 @@ class Views:
         download_layout.addWidget(row(self.model_download_button,self.model_cancel,None))
         self.model_progress=QProgressBar(); self.model_progress.setRange(0,100); self.model_progress.setValue(0); download_layout.addWidget(self.model_progress)
         body.addWidget(block)
-        comparison=Disclosure('Сравнение моделей и автоподбор — дополнительно');body.addWidget(comparison)
-        block,layout=card('Проверка выбранной модели')
-        self.benchmark_button=button('Проверить выбранную модель',self.benchmark_model)
+        comparison=Disclosure('Измерить скорость и сравнить модели');body.addWidget(comparison)
+        block,layout=card('Короткая проверка модели')
+        self.benchmark_button=button('Запустить проверку · 8 заданий',self.benchmark_model)
         self.benchmark_cancel=button('Отменить проверку',self.cancel_operation);self.benchmark_cancel.setEnabled(False)
         layout.addWidget(row(self.benchmark_button,self.benchmark_cancel,None))
-        benchmark_help=label('4 задания × 2 попытки: точность по правилу и время до первого предложения. Без голоса и реальных разговоров; узкий тест, не общий рейтинг. Для запуска остановите бота.','subtitle')
+        benchmark_help=label('Покажет время ответа и выполнение 4 простых заданий в двух попытках. Это проверка на вашем компьютере, а не рейтинг интеллекта. Для запуска остановите бота.','subtitle')
         benchmark_help.setToolTip('Обдумывание выключено для одинаковых условий. Отдельного прогрева нет; первая попытка может включать загрузку модели. Отмена после текущего сетевого чтения — максимум через 20 секунд. Сравнивайте результаты при одинаковых ресурсах и нагрузке.')
         layout.addWidget(benchmark_help)
+        self.benchmark_progress=QProgressBar();self.benchmark_progress.setRange(0,8);self.benchmark_progress.setValue(0)
+        self.benchmark_progress.setFormat('Задание %v из %m')
+        layout.addWidget(self.benchmark_progress)
         self.benchmark_result=QPlainTextEdit();self.benchmark_result.setReadOnly(True);self.benchmark_result.setMaximumHeight(180)
         self.benchmark_result.setPlaceholderText('Здесь появятся измерения на вашем компьютере.');layout.addWidget(self.benchmark_result)
         comparison.body.addWidget(block)
@@ -169,6 +177,15 @@ class Views:
 
     def persona_view(self):
         page_widget,body=page('Характер бота','Опиши, как бот должен общаться. Изменения действуют после сохранения.',row(button('Сохранить характер',self.save_persona,True),None))
+        presets,choices=card('Начать с готового характера')
+        self.persona_preset=QComboBox();self.persona_preset.addItem('Мой текст','custom')
+        self.persona_preset.addItem('Обычный — дружелюбно и по делу','standard')
+        self.persona_preset.addItem('Жёсткий — дерзко, с матом','aggressive')
+        self.persona_preset.addItem('Спокойный — объясняет без спешки','calm')
+        self.persona_preset.currentIndexChanged.connect(self.preview_persona_preset)
+        choices.addWidget(self.persona_preset)
+        choices.addWidget(label('Выберите вариант, поправьте текст ниже и нажмите «Сохранить характер». Пока не сохранили, бот общается по-прежнему.','subtitle'))
+        body.addWidget(presets)
         block,layout=card('Как Собеседник общается')
         layout.addWidget(label('Опишите характер, манеру речи и предпочтения. При сохранении создаётся резервная копия. Новая персона используется в следующих вопросах.','subtitle'))
         self.persona_edit=QPlainTextEdit(); self.persona_edit.setMinimumHeight(200); layout.addWidget(self.persona_edit)
@@ -176,18 +193,19 @@ class Views:
         block=Disclosure('Текущая беседа — дополнительно');layout=block.body
         layout.addWidget(label('Загрузите историю выбранного сервера. Можно исправить реплики или сбросить разговор. Каждая новая реплика начинается с «Человек:» или «Собеседник:». Это не изменяет постоянную память.','subtitle'))
         self.context_edit=QPlainTextEdit(); self.context_edit.setMinimumHeight(170); self.context_edit.setPlaceholderText('Человек: О чём мы говорили?\nСобеседник: О локальных моделях.'); layout.addWidget(self.context_edit)
-        layout.addWidget(label('«Загрузить» показывает текущий разговор. Для изменения нажмите «Применить». После перезапуска этот контекст очищается; важные факты сохраните в разделе «Память». Персона сохраняется отдельно и действует после перезапуска.','subtitle'))
+        layout.addWidget(label('«Загрузить» показывает текущий разговор. Для изменения нажмите «Применить». После перезапуска этот контекст очищается; постоянная память и характер сохраняются отдельно.','subtitle'))
         layout.addWidget(row(button('Загрузить контекст',self.load_context),button('Применить',self.save_context),button('Сбросить разговор',lambda:self.command('reset'),danger=True),None)); body.addWidget(block)
         body.addStretch(); return page_widget
 
     def memory_view(self):
         self.memory_save_button=button('Сохранить настройки памяти',self.save_memory_settings,True)
         page_widget,body=page('Память','Посмотрите, какие сведения сохранены, кто их сообщил и к кому они относятся.',row(self.memory_save_button,None))
-        block=Disclosure('Автоматическое запоминание');layout=block.body
+        body.addWidget(label('Здесь — сохранённые сведения и кто их сообщил. Бот учитывает их как слова участников, а не проверенные факты. Новый автоматический отбор пропускает обрывки и случайные реплики; старые записи можно просмотреть и удалить.','subtitle'))
+        block=Disclosure('Что запоминать автоматически');layout=block.body
         self.listen_conversation=QCheckBox('Учитывать разговор людей в голосовом канале')
-        self.memory_auto_enabled=QCheckBox('Автоматически выделять и сохранять важные факты')
-        self.learning_capture_enabled=QCheckBox('Собирать отфильтрованные примеры диалога и исправления')
-        self.learning_auto_enabled=QCheckBox('Автоматически обучать веса LoRA во время простоя')
+        self.memory_auto_enabled=QCheckBox('Запоминать устойчивые сведения: имена, предпочтения, занятия и привычки')
+        self.learning_capture_enabled=QCheckBox('Собирать подходящие примеры и мои исправления для улучшения ответов')
+        self.learning_auto_enabled=QCheckBox('Дообучать совместимую модель автоматически в простое · нужен тренер')
         for control in (self.listen_conversation,self.memory_auto_enabled,self.learning_capture_enabled,self.learning_auto_enabled):layout.addWidget(control)
         self.learning_capture_enabled.toggled.connect(self.learning_capture_changed)
         layout.addWidget(label('Полезные сведения сохраняются автоматически. Когда отвечать — выбирается в настройках бота. Для изменения весов нужен отдельный тренер. После изменения этих параметров перезапусти бота.','subtitle'))
@@ -213,7 +231,8 @@ class Views:
         cleanup=Disclosure('Удалить сведения участника или очистить всё');layout.addWidget(cleanup)
         cleanup.body.addWidget(row(button('Забыть участника',self.forget_person,danger=True),button('Очистить память сервера',self.clear_memory,danger=True),button('Очистить учебные примеры',self.clear_learning,danger=True),None))
         body.insertWidget(0,block)
-        block=Disclosure('Дообучение модели — дополнительно');layout=block.body
+        block=Disclosure('Автообучение весов — дополнительно');layout=block.body
+        layout.addWidget(label('Факты и поправки уже учитываются без изменения весов. Дообучение требует отдельного тренера и свободного места. После однократной настройки оно может выполняться само в простое; начинать его вручную перед каждым разговором не нужно.','subtitle'))
         self.learning_label=label('Память сохраняет сведения сразу. Изменение весов — отдельное экспериментальное LoRA-обучение. Новые веса допускаются только после проверки качества; неудачные кандидаты отклоняются.','subtitle'); layout.addWidget(self.learning_label)
         layout.addWidget(label('Удаление учебного примера удаляет его из базы. Оно не стирает влияние примера из ранее обученных весов. Удаление памяти сервера также удаляет его учебные примеры.','subtitle'))
         self.learning_install=button('Настроить экспериментальное обучение',self.setup_learning)

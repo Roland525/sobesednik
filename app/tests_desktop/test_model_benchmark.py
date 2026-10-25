@@ -3,7 +3,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from desktop.model_benchmark import CASES,generate,passes,run_benchmark
+from desktop.model_benchmark import CASES,generate,passes,run_benchmark,report_key,format_report
 
 
 class Response:
@@ -46,6 +46,38 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(report['passed'],8);self.assertEqual(report['total'],8)
         self.assertEqual(report['median_first_sentence_seconds'],1.5)
         self.assertEqual(report['resource_level'],50);self.assertFalse(report['think'])
+
+    def test_v2_report_records_actual_compute_options_not_stale_resource_level(self):
+        with patch('desktop.model_benchmark.installed_models',return_value=['local:4b']), \
+             patch('desktop.model_benchmark.generate',return_value=('42',1,2)) as generate_call, \
+             patch('desktop.model_benchmark.request',return_value=Response([])), \
+             patch('bot.config.os.cpu_count',return_value=24):
+            report=run_benchmark({'ollama_model':'local:4b','compute_mode':'cpu',
+                                  'resource_level':100,'ollama_num_gpu':-1,
+                                  'ollama_num_thread':30},threading.Event())
+        self.assertEqual(report['schema'],2)
+        self.assertEqual(report['suite'],'synthetic-exact-v2')
+        self.assertEqual(report['compute_mode'],'cpu')
+        self.assertEqual(report['options']['num_gpu'],0)
+        self.assertEqual(report['options']['num_thread'],8)
+        for call in generate_call.call_args_list:
+            self.assertEqual(call.args[3],report['options'])
+        self.assertEqual(report['resource_settings']['tts_cpu_threads'],4)
+        self.assertIn('Только процессор',format_report(report))
+        self.assertNotIn('/100',format_report(report))
+
+    def test_v2_keys_separate_modes_and_reject_legacy_numeric_budget(self):
+        self.assertNotEqual(report_key('local:4b','auto'),report_key('local:4b','cpu'))
+        self.assertNotEqual(report_key('local:4b','auto'),report_key('other:4b','auto'))
+        with self.assertRaises(ValueError):report_key('local:4b',70)
+
+    def test_legacy_cpu_selection_is_migrated_before_benchmark(self):
+        with patch('desktop.model_benchmark.installed_models',return_value=['local:4b']), \
+             patch('desktop.model_benchmark.generate',return_value=('42',1,2)), \
+             patch('desktop.model_benchmark.request',return_value=Response([])):
+            report=run_benchmark({'ollama_model':'local:4b','resource_level':0},threading.Event())
+        self.assertEqual(report['compute_mode'],'cpu')
+        self.assertEqual(report['options']['num_gpu'],0)
 
 
 if __name__=='__main__':unittest.main()
