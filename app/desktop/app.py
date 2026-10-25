@@ -330,6 +330,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
 
     def refresh(self):
         self.state=self.protocol.status(); running=self.runtime.running()
+        self.describe_behavior()
         if self.awaiting_ready:
             if self.state.get('services_error'):
                 self.awaiting_ready=False;self.notice('Не удалось подготовить голос. Откройте диагностику: '+str(self.state['services_error']))
@@ -492,8 +493,14 @@ class MainWindow(QMainWindow,Views,QualityControls):
             self.loaded_voice_values={key:(voice_values[key],widget.value())
                 for key,widget in [('tts_speed',self.speed),('tts_volume',self.volume)]}
             self.compute_mode_changed()
-            self.notice('Настройки сохранены. Для применения перезапустите бота.')
-            if restart and self.runtime.running(): self.restart_bot()
+            self.notice('Настройки сохранены. Голос и модель применяются при следующем запуске.')
+            if self.runtime.running():
+                if restart:self.restart_bot()
+                elif self.state.get('behavior'):
+                    self.command('apply_behavior',{'settings':{
+                        'conversation_mode':self.mode_choice.currentData(),
+                        'followup_enabled':self.followup.isChecked(),'interrupt_enabled':self.interrupt.isChecked()}})
+                else:self.notice('Настройки сохранены. Перезапустите работающего бота, чтобы обновить обработку режимов.')
         except Exception as error: self.notice(str(error))
 
     def populate_models(self,names,selected=None):

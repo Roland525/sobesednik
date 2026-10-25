@@ -9,7 +9,7 @@ import time
 from collections import deque
 import discord
 
-from .conversation import Conversation, addressed, likely_followup
+from .conversation import Conversation, addressed, likely_followup, public_question
 from .voice.transcription_sink import TranscriptionSink
 from .controls import voice_control, addresses_someone_else, screen_request, SCREEN_UNAVAILABLE
 from .security import private_request_reply, computer_action_reply, safe_output
@@ -143,6 +143,28 @@ class GuildSession:
                         self.memory.register(self.guild_id, member.id, member.display_name, getattr(member, 'name', ''))
             except Exception as error:
                 self.logger.warning('Не удалось обновить имена в памяти: %s', type(error).__name__)
+
+    async def apply_behavior(self,values):
+        from .config import validate_behavior
+        values=validate_behavior(values)
+        previous=(self.rare_mode,self.participant_mode,self.require_wake_each_turn)
+        for key,value in values.items():setattr(self.config,key,value)
+        self.rare_mode=self.config.conversation_mode=='rare'
+        self.participant_mode=self.config.conversation_mode in ('participant','rare')
+        self.require_wake_each_turn=self.config.conversation_mode=='strict'
+        if previous==(self.rare_mode,self.participant_mode,self.require_wake_each_turn):return
+        for item in list(self.questions._queue):
+            pending=item[2]
+            if pending.kind=='ambient' or pending.kind=='initiative':
+                self.questions._queue.remove(item);self.questions.task_done()
+                self.journal.update(pending.turn_id,status='ignored',reason='mode_changed')
+                if pending.future and not pending.future.done():pending.future.cancel()
+        heapq.heapify(self.questions._queue)
+        self.ambient_pending=False;self.initiative_pending=False
+        if self.current_kind in ('ambient','initiative') and self.response_task:
+            self.response_task.cancel()
+            await asyncio.gather(self.response_task,return_exceptions=True)
+            if not self.closed:self.response_task=asyncio.create_task(self.respond(),name=f'reply-{self.guild_id}')
 
     async def detach_capture(self):
         if self.voice_client and self.voice_client.is_listening():
@@ -346,7 +368,7 @@ class GuildSession:
                                 timings,kind='say',turn_id=turn_id,route_reason='wake_only'))
                         continue
                     self.awaiting_question = None
-                    if self.rare_mode and hit and self.current_kind == 'ambient' and self.response_task:
+                    if self.config.interrupt_enabled and hit and self.current_kind in ('ambient','initiative') and self.response_task:
                         self.response_task.cancel()
                         await asyncio.gather(self.response_task, return_exceptions=True)
                         if not self.closed:
@@ -359,6 +381,10 @@ class GuildSession:
                     # not a second route around the followup decision.
                     self.observe_ambient(uid,utterance.member.display_name,text)
                 elif self.participant_mode and not self.quiet_mode:
+                    if addresses_someone_else(text,names,self.config.wake_word):
+                        self.observe_ambient(uid,utterance.member.display_name,text)
+                        self.journal.update(turn_id,status='ignored',reason='other_addressee')
+                        continue
                     if self.rare_mode:
                         if not self.rare_candidate(text, now, names):
                             self.observe_ambient(uid, utterance.member.display_name, text)
@@ -369,7 +395,9 @@ class GuildSession:
                         or len(text.split()) < 3):
                         self.observe_ambient(uid, utterance.member.display_name, text)
                     else:
-                        self.enqueue(Question(uid, utterance.member.display_name, text, utterance.ended, timings, kind='ambient'))
+                        reason='public_question' if not self.rare_mode and public_question(text) else 'ambient'
+                        self.enqueue(Question(uid, utterance.member.display_name, text, utterance.ended, timings,
+                            kind='ambient',turn_id=turn_id,route_reason=reason))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -379,7 +407,7 @@ class GuildSession:
                 self.audio_queue.task_done()
 
     def context_for(self, kind):
-        return self.channel_conversation if self.rare_mode and kind.startswith('ambient') else self.conversation
+        return self.channel_conversation if kind.startswith('ambient') else self.conversation
 
     def shared_context(self,uid,text):
         if not self.config.listen_conversation: return ''
@@ -600,6 +628,34 @@ class GuildSession:
         self.journal.update(question.turn_id,status='waiting_for_speaker')
         return False
 
+    async def wait_for_channel_pause(self,question):
+        deadline=time.monotonic()+2.0
+        pause=self.config.ambient_pause if self.rare_mode else .35
+        while True:
+            if self.closed or self.muted or self.quiet_mode:return False
+            if self.questions.qsize() and self.questions._queue[0][0]==0:return False
+            last_voice=max((s.last_voice for s in self.sink.speakers.values()),default=0) if self.sink else 0
+            if time.monotonic()-last_voice>=pause:return True
+            if time.monotonic()>=deadline:return False
+            self.journal.update(question.turn_id,status='waiting_for_pause')
+            await asyncio.sleep(.04)
+
+    async def optional_comment(self,question,messages):
+        reply=await self.llm.participate(messages,question.timings,**({'conservative':True} if self.rare_mode else {}))
+        direct_pending=self.questions.qsize() and self.questions._queue[0][0]==0
+        newer_speech=self.rare_mode and self.last_human_at>question.enqueued_at
+        repeated=self.rare_mode and any(SequenceMatcher(None,reply.lower(),item['content'].lower()).ratio()>.75
+            for item in [*self.conversation.history,*self.channel_conversation.history] if item['role']=='assistant')
+        reason=('no_useful_comment' if not reply else 'direct_priority' if direct_pending else
+                'newer_speech' if newer_speech else 'repeated_comment' if repeated else '')
+        if not reason and not await self.wait_for_channel_pause(question):reason='no_channel_pause'
+        if reason:
+            self.observe_ambient(question.user_id,question.name,question.text)
+            self.journal.update(question.turn_id,status='ignored',reason=reason,timings=dict(question.timings))
+            return ''
+        question.text,question.kind=reply,'ambient_say'
+        return await self.speak_stream(question,messages)
+
     async def speak_stream(self, question, messages):
         from contextlib import aclosing
         sentences = asyncio.Queue(maxsize=2)
@@ -639,12 +695,13 @@ class GuildSession:
                     break
                 pcm, sentence = item
                 if not spoken and not await self.wait_for_speaker(question):raise SpeechDeferred()
-                if self.rare_mode and question.kind == 'ambient_say':
-                    last_voice = max((s.last_voice for s in self.sink.speakers.values()), default=0) if self.sink else 0
-                    if (self.quiet_mode or self.muted or self.last_human_at > question.enqueued_at
-                        or time.monotonic() - last_voice < self.config.ambient_pause
-                        or (not self.questions.empty() and self.questions._queue[0][0] == 0)):
-                        return
+                if question.kind.startswith('ambient'):
+                    if self.rare_mode and (self.quiet_mode or self.muted or self.last_human_at > question.enqueued_at):
+                        self.journal.update(question.turn_id,status='ignored',reason='newer_speech')
+                        raise SpeechDeferred()
+                    if not await self.wait_for_channel_pause(question):
+                        self.journal.update(question.turn_id,status='ignored',reason='no_channel_pause')
+                        raise SpeechDeferred()
                 await self.play_pcm(pcm, question, sentence)
                 spoken.append(sentence)
         try:
@@ -689,9 +746,11 @@ class GuildSession:
                     continue
                 if question.kind == 'ambient':
                     if self.quiet_mode:
+                        self.journal.update(question.turn_id,status='ignored',reason='muted')
                         continue
                     if time.monotonic() - self.last_reply_at < self.config.ambient_cooldown:
                         self.observe_ambient(question.user_id, question.name, question.text)
+                        self.journal.update(question.turn_id,status='ignored',reason='ambient_cooldown')
                         continue
                     # Wait for a natural pause and yield to explicit questions.
                     for _ in range(25):
@@ -703,9 +762,11 @@ class GuildSession:
                         await asyncio.sleep(.1)
                     else:
                         self.observe_ambient(question.user_id, question.name, question.text)
+                        self.journal.update(question.turn_id,status='ignored',reason='no_channel_pause')
                         continue
                     if self.questions.qsize() and self.questions._queue[0][0] == 0:
                         self.observe_ambient(question.user_id, question.name, question.text)
+                        self.journal.update(question.turn_id,status='ignored',reason='direct_priority')
                         continue
                 self.conversation.extend(question.user_id)
                 question.timings['reply_queue_ms'] = (time.monotonic() - question.enqueued_at) * 1000
@@ -752,23 +813,20 @@ class GuildSession:
                     response = await self.speak_stream(question, messages)
                 elif question.kind == 'ambient':
                     self.last_ambient_checked = time.monotonic()
-                    if self.rare_mode:
-                        reply = await self.llm.participate(messages, question.timings, conservative=True)
+                    if (not self.rare_mode and question.route_reason=='public_question'
+                        and public_question(question.text)):
+                        if not await self.wait_for_channel_pause(question):
+                            self.journal.update(question.turn_id,status='ignored',reason='no_channel_pause')
+                            self.observe_ambient(question.user_id,question.name,question.text)
+                            continue
+                        question.kind='ambient_reply'
+                        response=await self.speak_stream(question,messages)
+                        if response:
+                            self.dialogue_owner=question.user_id
+                            self.conversation.commit(messages,response)
                     else:
-                        reply = await self.llm.participate(messages, question.timings)
-                    # If someone resumed speaking during the decision, save the
-                    # context and wait for another opportunity instead of cutting in.
-                    pause = self.config.ambient_pause if self.rare_mode else .35
-                    speaking = self.sink and any(time.monotonic() - s.last_voice < pause for s in self.sink.speakers.values())
-                    direct_pending = self.questions.qsize() and self.questions._queue[0][0] == 0
-                    newer_speech = self.rare_mode and self.last_human_at > question.enqueued_at
-                    repeated = self.rare_mode and any(SequenceMatcher(None, reply.lower(), item['content'].lower()).ratio() > .75
-                        for item in [*self.conversation.history, *self.channel_conversation.history] if item['role'] == 'assistant')
-                    if not reply or speaking or direct_pending or newer_speech or repeated:
-                        self.observe_ambient(question.user_id, question.name, question.text)
-                        continue
-                    question.text, question.kind = reply, 'ambient_say'
-                    response = await self.speak_stream(question, messages)
+                        response=await self.optional_comment(question,messages)
+                    if not response:continue
                 elif question.kind == 'text':
                     parts = [part async for part in self.llm.stream_sentences(messages, question.timings)]
                     response = ' '.join(parts)
@@ -787,7 +845,7 @@ class GuildSession:
                     except Exception as error:
                         self.logger.warning('Не удалось учесть ответ для исправления: %s', type(error).__name__)
                 self.last_reply_at = time.monotonic()
-                if self.rare_mode and pending_kind == 'voice':
+                if self.participant_mode and pending_kind == 'voice':
                     self.channel_conversation.commit(messages, response)
                 if pending_kind == 'ambient':
                     self.last_unsolicited_at = self.last_reply_at

@@ -42,6 +42,24 @@ def wake_aliases(wake_word):
     return {name,'серега','серег','сережа','сереж'} if name in ('собеседник','серега','серег','сережа','сереж') else {name}
 
 
+def public_question(text):
+    """Narrow open questions for participant mode, never general activation."""
+    value=' '.join(re.findall(r'\w+',text.lower().replace('ё','е')))
+    if not 3<=len(value.split())<=55:
+        return False
+    if (text.lstrip().startswith(('«','"','“'))
+        or re.search(r'\b(?:ты|тебе|тебя|тобой|твой|твоя|твои|твоего)\b',value)
+        or re.match(r'^(?:как всегда|как обычно|как то так|как уже|когда то)\b',value)):
+        return False
+    if '?' in text:
+        return bool(re.match(r'^(?:почему|зачем|откуда|куда|когда|сколько|как|какой|какая|какие|какое|что|чем)\b|'
+                             r'^кто (?:знает|нибудь знает)\b',value))
+    return bool(re.match(r'^(?:почему|зачем|откуда|сколько)\b|'
+                         r'^(?:кто (?:знает|нибудь знает)|что (?:такое|значит|делать|лучше)|'
+                         r'чем отличается|в чем (?:разница|причина)|'
+                         r'как (?:правильно|можно|лучше|сделать|настроить|исправить|понять|найти|выбрать|работает|устроен))\b',value))
+
+
 def addressed(text: str, wake_word='серёга'):
     """Recognize a vocative anywhere, preserving both halves of the question."""
     normalized = text.lower().replace('ё', 'е')

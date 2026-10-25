@@ -37,6 +37,19 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.page_opacity.opacity(),1.0,
             'The opening page must not inherit QGraphicsOpacityEffect default opacity of 0.7')
 
+    def test_saving_behavior_sends_live_apply_without_restarting_or_clearing_context(self):
+        self.window.state={'ready':True,'behavior':{'conversation_mode':'strict','followup_enabled':True,'interrupt_enabled':True}}
+        self.window.mode_choice.setCurrentIndex(self.window.mode_choice.findData('participant'))
+        self.window.context_edit.setPlainText('Unsaved context draft')
+        with patch.object(self.window.runtime,'running',return_value=True), \
+                patch.object(self.window,'command') as command,patch.object(self.window,'restart_bot') as restart:
+            self.window.save_settings()
+            command.assert_called_once()
+            self.assertEqual(command.call_args.args[0],'apply_behavior')
+            self.assertEqual(command.call_args.args[1]['settings']['conversation_mode'],'participant')
+            restart.assert_not_called()
+        self.assertEqual(self.window.context_edit.toPlainText(),'Unsaved context draft')
+
     def test_diagnostics_show_running_wake_name_and_warn_when_saved_name_differs(self):
         self.window.profile.save_settings({'bot_name':'Гранит','wake_word':'Гранит'})
         self.window.state={'ready':True,'wake_word':'Робин','name':'Робин'}

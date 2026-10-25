@@ -8,6 +8,18 @@ import ipaddress
 
 ROOT = Path(__file__).resolve().parents[1]
 
+BEHAVIOR_FIELDS=('conversation_mode','followup_enabled','interrupt_enabled')
+
+
+def validate_behavior(values):
+    if not isinstance(values,dict) or set(values)!=set(BEHAVIOR_FIELDS):
+        raise ValueError('Поведение: укажите режим, продолжения диалога и прерывание речи')
+    if values['conversation_mode'] not in ('strict','summon','participant','rare'):
+        raise ValueError('Неизвестный режим общения')
+    if any(type(values[key]) is not bool for key in BEHAVIOR_FIELDS[1:]):
+        raise ValueError('Продолжения и прерывание должны быть включены или выключены')
+    return dict(values)
+
 
 def compute_settings(mode):
     """Canonical runtime resources for the two user-facing compute modes."""

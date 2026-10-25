@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.1.7"
+  #define AppVersion "1.1.8"
 #endif
 #ifndef BuildRoot
   #define BuildRoot "..\.desktop-build"

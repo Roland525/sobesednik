@@ -37,6 +37,8 @@ def addresses_someone_else(text, names, wake_word='серёга'):
         name = re.sub(r'[^\w\s-]', '', name.lower().replace('ё', 'е')).strip()
         if len(name) >= 3 and re.match(r'^\s*(?:эй\s*[,!]?\s*)?' + re.escape(name) + r'\b', value):
             return True
+        if len(name)>=3 and re.search(r',\s*'+re.escape(name)+r'\s*[.!?…]*\s*$',value):
+            return True
     return False
 
 

@@ -11,6 +11,13 @@ class DesktopControl:
         self.bot=bot; self.profile=Profile(root); self.protocol=Protocol(root)
 
     async def dispatch(self, op, payload):
+        if op=='apply_behavior':
+            from .config import validate_behavior
+            values=validate_behavior(payload.get('settings'))
+            for session in tuple(self.bot.sessions.values()):
+                await session.apply_behavior(values)
+            for key,value in values.items():setattr(self.bot.config,key,value)
+            return 'Поведение применено к работающему боту. Текущая беседа и память сохранены.'
         guild=self.bot.get_guild(int(payload.get('guild',0)))
         if not guild: raise ValueError('Сервер не найден. Обновите список.')
         if op=='feedback_add':
@@ -100,6 +107,7 @@ class DesktopControl:
                 'services_error':getattr(self.bot,'services_error',''),
                 'guilds':guilds,'sessions':sessions,'name':self.bot.config.bot_name,
                 'wake_word':self.bot.config.wake_word,
+                'behavior':{key:getattr(self.bot.config,key) for key in ('conversation_mode','followup_enabled','interrupt_enabled')},
                 'learning_maintenance':bool(self.bot.learning_request)}
 
     async def tick(self):

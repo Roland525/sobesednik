@@ -219,8 +219,9 @@ class StreamTests(unittest.IsolatedAsyncioTestCase):
         session.enqueue(Question(1, 'Тест', 'Сегодня хорошая погода.', time.monotonic(), kind='ambient'))
         await session.questions.join()
         self.assertFalse(session.ambient_pending)
-        self.assertEqual(session.conversation.history[-1]['role'], 'user')
-        self.assertIn('погода', session.conversation.history[-1]['content'])
+        self.assertEqual(session.channel_conversation.history[-1]['role'], 'user')
+        self.assertIn('погода', session.channel_conversation.history[-1]['content'])
+        self.assertFalse(session.conversation.history)
         await session.close()
 
     async def test_direct_question_takes_priority_over_ambient(self):

@@ -98,7 +98,7 @@ class Views:
         self.settings_save_button=button('Сохранить',self.save_settings,True)
         self.settings_restart_button=button('Сохранить и перезапустить',lambda:self.save_settings(True))
         self.settings_toolbar=row(self.settings_save_button,self.settings_restart_button,None)
-        page_widget,root=page('Настройки бота','Выбери нужную вкладку. После изменений нажми «Сохранить и перезапустить».',self.settings_toolbar,scroll=False)
+        page_widget,root=page('Настройки бота','Режим общения — «Сохранить». Остальные настройки — «Сохранить и перезапустить».',self.settings_toolbar,scroll=False)
         self.settings_tabs=QTabWidget();root.addWidget(self.settings_tabs,1)
         areas=[]
         for title in ('Голос','Модель','Общение'):
@@ -165,15 +165,18 @@ class Views:
         block,layout=card('Поведение и контекст')
         form=QFormLayout(); form.setSpacing(15)
         self.mode_choice=QComboBox(); self.mode_choice.addItem('Обращения по имени','strict'); self.mode_choice.addItem('Обращения и очень редкие дополнения','rare'); form.addRow('Когда отвечать',self.mode_choice)
-        self.mode_choice.addItem('Участник беседы (прежний режим)','participant')
-        self.mode_choice.addItem('Обращение и продолжение разговора (прежний режим)','summon')
+        self.mode_choice.addItem('Участник беседы — общие вопросы и уместные реплики','participant')
+        self.mode_choice.addItem('Диалог после обращения','summon')
         self.followup=QCheckBox('Разрешать тому же участнику связанные уточнения без имени');form.addRow(self.followup)
         self.interrupt=QCheckBox('Прерывать ответ при новом обращении или связанном уточнении');form.addRow(self.interrupt)
+        self.behavior_description=label('','subtitle');form.addRow(self.behavior_description)
+        self.mode_choice.currentIndexChanged.connect(self.describe_behavior)
+        self.followup.toggled.connect(self.describe_behavior);self.interrupt.toggled.connect(self.describe_behavior)
         self.length=QSpinBox(); self.length.setRange(40,2000); self.length.setSingleStep(80); form.addRow('Максимум символов ответа',self.length)
         self.history=QSpinBox(); self.history.setRange(1,30); form.addRow('Хранить пар реплик в контексте',self.history)
         self.reasoning=QCheckBox('Дополнительное обдумывание · может увеличить задержку'); form.addRow(self.reasoning)
         self.dota=QCheckBox('Разрешить чтение официальных патчноутов Valve'); form.addRow(self.dota)
-        layout.addLayout(form); layout.addWidget(label('Простые вопросы остаются краткими. Большое объяснение можно попросить словами «подробно» или «по шагам». Команда «заткнись» останавливает речь; новое обращение по имени снова разрешает ответ.','subtitle'))
+        layout.addLayout(form); layout.addWidget(label('Режим, продолжения и прерывание применяются кнопкой «Сохранить» без перезапуска. Остальные параметры — кнопкой «Сохранить и перезапустить». Простые ответы краткие; подробности можно попросить отдельно. Команда «заткнись» останавливает речь; новое обращение по имени снова разрешает ответ.','subtitle'))
         body.addWidget(block)
         body.addStretch(); return page_widget
 

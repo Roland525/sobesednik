@@ -5,6 +5,13 @@ from PySide6.QtWidgets import QTableWidget,QTableWidgetItem,QPlainTextEdit,QAbst
 from .widgets import card,label,button,row
 
 REASONS={'named':'Обращение по имени','followup':'Продолжение темы тем же участником',
+         'public_question':'Общий вопрос — режим участника беседы',
+         'no_useful_comment':'Не вступил: нет полезного дополнения',
+         'ambient_cooldown':'Не вступил: выдерживает интервал после предыдущего ответа',
+         'direct_priority':'Уступил прямому обращению','newer_speech':'Беседа уже продолжилась',
+         'no_channel_pause':'Не вступил: нет паузы или речь остановлена',
+         'repeated_comment':'Не повторяет прежнее дополнение','other_addressee':'Обращение к другому участнику',
+         'mode_changed':'Прежняя необязательная реплика отменена после смены режима',
          'wake_only':'Имя услышал — жду сам вопрос',
          'continuation':'Участник договаривает ещё не озвученный вопрос',
          'clarification':'Уточнение команды или памяти','background':'Беседа канала — ответ не запрошен',
@@ -14,7 +21,14 @@ REASONS={'named':'Обращение по имени','followup':'Продолж
          'text':'Текстовый вопрос','voice':'Голосовой вопрос','say':'Служебная реплика'}
 STATUSES={'heard':'Услышал','queued':'В очереди','working':'Готовлю ответ','answered':'Ответил',
           'ignored':'Пропущено','stopped':'Остановлен','waiting_for_speaker':'Ждёт окончания фразы',
-          'waiting_for_question':'Ждёт вопроса','error':'Ошибка'}
+          'waiting_for_question':'Ждёт вопроса','waiting_for_pause':'Ждёт паузы','error':'Ошибка'}
+
+BEHAVIOR_NAMES={'strict':'По имени','summon':'Диалог после обращения','rare':'Очень редкие дополнения','participant':'Участник беседы'}
+BEHAVIOR_DETAILS={
+    'strict':'Отвечает на обращение по имени. Связанные уточнения без имени разрешаются флажком ниже.',
+    'summon':'Начинает личный диалог после обращения. Продолжения без имени зависят от флажка ниже.',
+    'rare':'Обращения по имени и очень редкие полезные дополнения. Общий вопрос сам по себе не гарантирует ответ.',
+    'participant':'Отвечает на понятные общие вопросы без имени и иногда добавляет уместную реплику. Ждёт паузы, соблюдает интервал и не отвечает на каждое слово.'}
 
 
 class QualityControls:
@@ -130,6 +144,19 @@ class QualityControls:
         self.feedback_result=QPlainTextEdit();self.feedback_result.setReadOnly(True);self.feedback_result.setMaximumHeight(140)
         layout.addWidget(self.feedback_result)
         self.turn_rows=[];self.turn_signature=None
+
+    def describe_behavior(self,*args):
+        if not hasattr(self,'behavior_description'):return
+        mode=self.mode_choice.currentData()
+        text=BEHAVIOR_DETAILS.get(mode,'Выберите режим общения.')
+        active=self.state.get('behavior',{})
+        if active:
+            text+=' Сейчас работает: «'+BEHAVIOR_NAMES.get(active.get('conversation_mode'),str(active.get('conversation_mode')))+'».'
+            selected={'conversation_mode':mode,'followup_enabled':self.followup.isChecked(),'interrupt_enabled':self.interrupt.isChecked()}
+            if any(active.get(key)!=value for key,value in selected.items()):text+=' Нажмите «Сохранить», чтобы применить выбранное поведение.'
+        elif self.state:text+=' Для применения поведения к прежней версии работающего бота нужен перезапуск.'
+        else:text+=' После сохранения применяется при запуске бота.'
+        self.behavior_description.setText(text)
 
     def correct_turn(self,kind):
         from PySide6.QtWidgets import QInputDialog

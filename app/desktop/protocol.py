@@ -9,7 +9,7 @@ from pathlib import Path
 from .storage import atomic_json, read_shared
 
 OPERATIONS={'join','leave','mute','reset','replace_context','memory_add','memory_delete','memory_forget',
-            'memory_clear','learning_delete','learning_clear','feedback_add'}
+            'memory_clear','learning_delete','learning_clear','feedback_add','apply_behavior'}
 
 
 class Protocol:
