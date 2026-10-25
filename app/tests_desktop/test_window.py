@@ -32,6 +32,45 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(self.window.pages.currentIndex(),index)
         self.assertEqual(self.window.token_input.echoMode(),QLineEdit.Password)
 
+    def test_first_page_is_fully_opaque_without_navigation(self):
+        self.assertEqual(self.window.pages.currentIndex(),0)
+        self.assertEqual(self.window.page_opacity.opacity(),1.0,
+            'The opening page must not inherit QGraphicsOpacityEffect default opacity of 0.7')
+
+    def test_home_explains_each_start_block_and_only_offers_start_when_ready(self):
+        with patch.object(self.window.protocol,'status',return_value={}), \
+                patch.object(self.window.runtime,'running',return_value=False), \
+                patch.object(self.window.runtime,'installed',return_value=True):
+            self.window.token=''
+            self.window.refresh()
+            self.assertFalse(self.window.start_button.isEnabled())
+            self.assertIn('токен',self.window.action_hint.text().lower())
+            self.window.token='synthetic-test-token'
+            self.window.refresh()
+            self.assertTrue(self.window.start_button.isEnabled())
+            self.assertEqual(self.window.start_button.text(),'Запустить бота')
+            self.assertEqual(self.window.status_label.property('state'),'stopped')
+            self.window.busy=True;self.window.refresh()
+            self.assertFalse(self.window.start_button.isEnabled())
+            self.assertIn('операци',self.window.action_hint.text().lower())
+            self.window.busy=False
+        with patch.object(self.window.runtime,'running',return_value=True), \
+                patch.object(self.window.runtime,'installed',return_value=True), \
+                patch.object(self.window.protocol,'status',return_value={'ready':True,'services_ready':True}):
+            self.window.refresh()
+            self.assertFalse(self.window.start_button.isEnabled())
+            self.assertEqual(self.window.start_button.text(),'Бот запущен')
+            self.assertTrue(self.window.stop_button.isEnabled())
+            self.assertEqual(self.window.status_label.property('state'),'ready')
+            self.assertIn('запущен',self.window.action_hint.text().lower())
+        with patch.object(self.window.runtime,'running',return_value=False), \
+                patch.object(self.window.runtime,'installed',return_value=False), \
+                patch.object(self.window.protocol,'status',return_value={}):
+            self.window.refresh()
+            self.assertFalse(self.window.start_button.isEnabled())
+            self.assertIn('установ',self.window.action_hint.text().lower())
+
+
     def test_rejected_old_auto_memory_is_hidden_by_default_and_can_be_reviewed(self):
         deadline=__import__('time').monotonic()+3
         while self.window.memory_pending and __import__('time').monotonic()<deadline:

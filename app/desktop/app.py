@@ -109,7 +109,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
         for build in [self.overview_view,self.discord_view,self.settings_view,self.persona_view,self.memory_view,self.logs_view]:
             self.pages.addWidget(build())
         content_layout.addWidget(self.pages,1); outer.addWidget(content,1); self.setCentralWidget(central)
-        self.page_opacity=QGraphicsOpacityEffect(self.pages);self.pages.setGraphicsEffect(self.page_opacity)
+        self.page_opacity=QGraphicsOpacityEffect(self.pages);self.page_opacity.setOpacity(1.0);self.pages.setGraphicsEffect(self.page_opacity)
         self.page_animation=QPropertyAnimation(self.page_opacity,b'opacity',self)
         self.page_animation.setDuration(150);self.page_animation.setEasingCurve(QEasingCurve.OutCubic)
         self.pages.currentChanged.connect(self.animate_navigation)
@@ -342,10 +342,28 @@ class MainWindow(QMainWindow,Views,QualityControls):
         self.status_label.setText('В Discord' if self.state.get('ready') else 'Подключается…' if running else 'Остановлен')
         if self.state.get('ready') and not self.state.get('services_ready',True):
             self.status_label.setText('Ошибка подготовки голоса' if self.state.get('services_error') else 'В Discord · готовим голос…')
-        self.start_button.setEnabled(not running and not self.busy and self.runtime.installed())
+        status_state=('error' if self.state.get('services_error') else
+                      'ready' if self.state.get('ready') and self.state.get('services_ready',True) else
+                      'starting' if running else 'stopped')
+        if self.status_label.property('state')!=status_state:
+            self.status_label.setProperty('state',status_state)
+            self.status_label.style().unpolish(self.status_label);self.status_label.style().polish(self.status_label)
+        installed=self.runtime.installed()
+        if self.busy:start_reason='Дождись завершения текущей операции. Кнопки станут доступны автоматически.'
+        elif running:start_reason='Бот уже запущен. Можно остановить его или перезапустить с сохранёнными настройками.'
+        elif not installed:start_reason='Сначала установи компоненты в разделе «Установка и обслуживание» ниже.'
+        elif not self.token:start_reason='Сначала добавь токен Discord в разделе «Подключение».'
+        else:start_reason='Всё готово. Нажми «Запустить бота», затем присоединись к голосовому каналу.'
+        self.action_hint.setText(start_reason)
+        self.start_button.setEnabled(not running and not self.busy and installed and bool(self.token))
+        self.start_button.setText('Бот запущен' if running else 'Запустить бота')
+        self.start_button.setToolTip(start_reason);self.start_button.setAccessibleDescription(start_reason)
         self.stop_button.setEnabled(running and not self.busy)
+        self.stop_button.setToolTip('Полностью остановить бота и отключить его от Discord.' if running else 'Бот уже остановлен.')
         self.restart_button.setEnabled(running and not self.busy)
+        self.restart_button.setToolTip('Перезапустить бота и вернуться в тот же голосовой канал.' if running else 'Сначала запусти бота.')
         self.hush_button.setEnabled(bool(self.state) and not self.busy)
+        self.hush_button.setToolTip('Прервать текущую речь. Новое обращение по имени снова разрешит ответ.' if self.state else 'Сначала запусти бота и дождись подключения к Discord.')
         self.install_button.setEnabled(not running and not self.busy)
         self.learning_install.setEnabled(not running and not self.busy and self.runtime.installed())
         self.model_cancel.setEnabled(self.model_downloading)
@@ -360,8 +378,8 @@ class MainWindow(QMainWindow,Views,QualityControls):
         if self.runtime.installed():
             self.install_button.setText('Проверить / доустановить')
             if not self.busy: self.install_stage.setText('Основные компоненты установлены')
-            self.hero_title.setText('Бот на связи' if self.state else 'Выполняем операцию…' if self.busy else 'Можно запускать')
-            self.hero_detail.setText('Выбери канал ниже и нажми «Присоединиться».' if self.state else ('Модели и токен готовы. Нажми «Запустить бота».' if self.token else 'Модели готовы. Добавь токен в разделе «Подключение».'))
+            self.hero_title.setText('Выполняем операцию…' if self.busy else 'Бот на связи' if self.state.get('ready') else 'Подключаемся к Discord…' if running else 'Готов к запуску' if self.token else 'Добавь токен Discord')
+            self.hero_detail.setText('Выбери канал ниже и нажми «Присоединиться».' if self.state.get('ready') else 'Подключение обычно занимает несколько секунд.' if running else 'Модели установлены. Управление запуском — ниже.')
             if self.state and not self.state.get('services_ready',True):
                 self.hero_detail.setText(self.state.get('services_stage') or 'Готовим голосовые компоненты…')
         guild=next((g for g in self.state.get('guilds',[]) if str(g['id'])==str(self.guild_id())),{})

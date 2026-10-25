@@ -1,7 +1,7 @@
 import os
 import sys
 
-from PySide6.QtCore import Qt, QEasingCurve, QPointF, QPropertyAnimation, QTimer
+from PySide6.QtCore import Qt, QEvent, QEasingCurve, QPointF, QPropertyAnimation, QTimer
 from PySide6.QtGui import QColor,QPainter,QPen,QWheelEvent
 from PySide6.QtWidgets import (QAbstractScrollArea, QApplication, QComboBox, QDoubleSpinBox, QFrame,
     QGraphicsOpacityEffect, QHBoxLayout, QLabel, QProgressBar, QPushButton,
@@ -133,8 +133,19 @@ def label(text, name=None, wrap=True):
     return item
 
 
+class ActionButton(QPushButton):
+    def __init__(self,text):
+        super().__init__(text)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def changeEvent(self,event):
+        super().changeEvent(event)
+        if event.type()==QEvent.EnabledChange:
+            self.setCursor(Qt.PointingHandCursor if self.isEnabled() else Qt.ArrowCursor)
+
+
 def button(text, callback, primary=False, danger=False):
-    item=QPushButton(text); item.setCursor(Qt.PointingHandCursor)
+    item=ActionButton(text)
     if primary or danger: item.setObjectName('primary' if primary else 'danger')
     item.clicked.connect(callback)
     return item

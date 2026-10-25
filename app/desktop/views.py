@@ -34,6 +34,8 @@ class Views:
         self.restart_button=button('Перезапустить',self.restart_bot)
         self.hush_button=button('Остановить речь',lambda:self.command('mute'))
         layout.addWidget(row(self.start_button,self.stop_button,self.restart_button,self.hush_button,None))
+        self.action_hint=label('Сначала установи компоненты и добавь токен Discord.','actionHint')
+        layout.addWidget(self.action_hint)
         self.home_connection=QVBoxLayout();self.home_connection.setSpacing(8);layout.addLayout(self.home_connection)
         body.addWidget(hero)
         identity,identity_layout=card('Имя бота')
