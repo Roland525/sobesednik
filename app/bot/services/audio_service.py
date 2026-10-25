@@ -107,6 +107,8 @@ class AudioService:
         segments, _ = self.model.transcribe(
             audio, language='ru', task='transcribe', beam_size=self.config.whisper_beam_size,
             best_of=1, temperature=0, condition_on_previous_text=False, vad_filter=False,
+            initial_prompt=f'Разговор на русском. Имя собеседника: {self.config.wake_word}.',
+            hotwords=self.config.wake_word,
             word_timestamps=False, no_speech_threshold=0.5, compression_ratio_threshold=2.6,
             max_new_tokens=min(224, max(48, int(len(audio) / 16000 * 12))), no_repeat_ngram_size=3)
         segments = list(segments)

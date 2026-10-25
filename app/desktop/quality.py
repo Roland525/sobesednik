@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QTableWidget,QTableWidgetItem,QPlainTextEdit,QAbst
 from .widgets import card,label,button,row
 
 REASONS={'named':'Обращение по имени','followup':'Продолжение темы тем же участником',
+         'wake_only':'Имя услышал — жду сам вопрос',
          'continuation':'Участник договаривает ещё не озвученный вопрос',
          'clarification':'Уточнение команды или памяти','background':'Беседа канала — ответ не запрошен',
          'hush':'Команда остановить речь','echo':'Похоже на эхо бота','duplicate':'Повтор той же фразы',
@@ -12,7 +13,8 @@ REASONS={'named':'Обращение по имени','followup':'Продолж
          'stale_audio':'Истёк срок ожидания в очереди или общий срок голосового вопроса',
          'text':'Текстовый вопрос','voice':'Голосовой вопрос','say':'Служебная реплика'}
 STATUSES={'heard':'Услышал','queued':'В очереди','working':'Готовлю ответ','answered':'Ответил',
-          'ignored':'Пропущено','stopped':'Остановлен','waiting_for_speaker':'Ждёт окончания фразы','error':'Ошибка'}
+          'ignored':'Пропущено','stopped':'Остановлен','waiting_for_speaker':'Ждёт окончания фразы',
+          'waiting_for_question':'Ждёт вопроса','error':'Ошибка'}
 
 
 class QualityControls:
@@ -111,6 +113,8 @@ class QualityControls:
         self.notice('Рекомендация сохранена. Запустите бота для проверки в разговоре.')
 
     def build_diagnostics(self,body):
+        self.wake_diagnostic=label('Подключи бота и произнеси имя вместе с вопросом.','subtitle')
+        body.addWidget(self.wake_diagnostic)
         block,layout=card('Последние реплики и ответы')
         layout.addWidget(label('Локальная диагностика: распознанная речь, правило ответа и сведения, переданные в модель. Последние 24 реплики; при сбросе разговора очищаются.','subtitle'))
         self.turn_table=QTableWidget(0,4);self.turn_table.setHorizontalHeaderLabels(['Время','Участник','Услышал','Результат'])
@@ -158,6 +162,16 @@ class QualityControls:
 
     def refresh_diagnostics(self):
         if not hasattr(self,'turn_table'):return
+        saved=self.profile.settings()['wake_word']
+        active=self.state.get('wake_word') if self.state else None
+        if active:
+            text='Запущенный бот ожидает: «'+active+'». Проверочная фраза: «'+active+', ты тут?».'
+            if active.casefold()!=saved.casefold():
+                text+=' В настройках сохранено «'+saved+'» — нужен перезапуск бота для применения имени.'
+        else:
+            text='Имя в настройках: «'+saved+'». Проверочная фраза: «'+saved+', ты тут?».'
+            if self.state:text+=' Эта версия бота не передаёт имя вызова; после обновления перезапусти его.'
+        self.wake_diagnostic.setText(text)
         rows=list(reversed(self.state.get('sessions',{}).get(str(self.guild_id()),{}).get('turns',[])))
         signature=json.dumps(rows,ensure_ascii=False)
         if signature==self.turn_signature:return

@@ -37,6 +37,18 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.page_opacity.opacity(),1.0,
             'The opening page must not inherit QGraphicsOpacityEffect default opacity of 0.7')
 
+    def test_diagnostics_show_running_wake_name_and_warn_when_saved_name_differs(self):
+        self.window.profile.save_settings({'bot_name':'Гранит','wake_word':'Гранит'})
+        self.window.state={'ready':True,'wake_word':'Робин','name':'Робин'}
+        self.window.refresh_diagnostics()
+        self.assertIn('Робин',self.window.wake_diagnostic.text())
+        self.assertIn('Гранит',self.window.wake_diagnostic.text())
+        self.assertIn('перезапуск',self.window.wake_diagnostic.text().lower())
+        self.window.state['wake_word']='Гранит'
+        self.window.refresh_diagnostics()
+        self.assertIn('Гранит, ты тут?',self.window.wake_diagnostic.text())
+        self.assertNotIn('Робин',self.window.wake_diagnostic.text())
+
     def test_home_explains_each_start_block_and_only_offers_start_when_ready(self):
         with patch.object(self.window.protocol,'status',return_value={}), \
                 patch.object(self.window.runtime,'running',return_value=False), \

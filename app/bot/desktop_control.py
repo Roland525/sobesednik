@@ -99,6 +99,7 @@ class DesktopControl:
                 'services_stage':getattr(self.bot,'services_stage',''),
                 'services_error':getattr(self.bot,'services_error',''),
                 'guilds':guilds,'sessions':sessions,'name':self.bot.config.bot_name,
+                'wake_word':self.bot.config.wake_word,
                 'learning_maintenance':bool(self.bot.learning_request)}
 
     async def tick(self):

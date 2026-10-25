@@ -330,6 +330,7 @@ class GuildSession:
                         followup = await self.llm.accept_followup(self.conversation.messages(uid, utterance.member.display_name, text))
                         if generation != self.generation:
                             continue
+                waiting_for_question=self.awaiting_question==uid and self.conversation.is_active(uid)
                 question = self.conversation.accept(uid, text) if hit or followup else None
                 timings = {**self.stt.last_ms, 'vad_ms': utterance.vad_ms,
                            'endpoint_ms': (utterance.queued - utterance.ended) * 1000,
@@ -337,6 +338,12 @@ class GuildSession:
                 if question is not None:
                     if not question:
                         self.awaiting_question = uid
+                        self.journal.update(turn_id,reason='wake_only',status='waiting_for_question')
+                        if hit and not waiting_for_question and not self.responding:
+                            # A fixed acknowledgement confirms the actual vocative;
+                            # no model call, no repeated "чего?" during the same window.
+                            self.enqueue(Question(uid,utterance.member.display_name,'Слушаю.',utterance.ended,
+                                timings,kind='say',turn_id=turn_id,route_reason='wake_only'))
                         continue
                     self.awaiting_question = None
                     if self.rare_mode and hit and self.current_kind == 'ambient' and self.response_task:

@@ -61,6 +61,20 @@ class STTStallTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DecodeBudgetTests(unittest.TestCase):
+    def test_selected_wake_name_is_given_to_recognition_without_rewriting_background_speech(self):
+        service=AudioService(logging.getLogger(),Config(bot_name='Гранит',wake_word='Гранит'))
+        service.model=Mock()
+        service.model.transcribe.return_value=([SimpleNamespace(text='Проверим настройки в меню.',avg_logprob=-.1,
+            no_speech_prob=.01,compression_ratio=1)],None)
+        try:
+            with patch('faster_whisper.vad.get_speech_timestamps',return_value=[{'start':0,'end':16000}]):
+                self.assertEqual(service.full_transcript(bytes(32000)),'Проверим настройки в меню.')
+            options=service.model.transcribe.call_args.kwargs
+            self.assertEqual(options['hotwords'],'Гранит')
+            self.assertIn('Гранит',options['initial_prompt'])
+            self.assertFalse(options['condition_on_previous_text'])
+        finally:service.close()
+
     def test_short_and_long_audio_have_bounded_token_budgets(self):
         service = AudioService(logging.getLogger(), Config())
         service.model = Mock()

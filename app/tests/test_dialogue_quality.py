@@ -153,7 +153,7 @@ class DialogueTests(unittest.IsolatedAsyncioTestCase):
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
             await state.close()
-    async def test_name_alone_arms_followup_without_saying_chego(self):
+    async def test_name_alone_arms_followup_with_one_fixed_ack_without_saying_chego(self):
         class STT:
             last_ms = {}
             text = 'Серёга!'
@@ -169,10 +169,10 @@ class DialogueTests(unittest.IsolatedAsyncioTestCase):
             await state.audio_queue.join()
         try:
             await feed('Серёга!')
-            self.assertEqual(queued, [])
+            self.assertEqual([q.text for q in queued], ['Слушаю.'])
             await feed('Объясни почему небо голубое')
-            self.assertEqual(len(queued), 1)
-            self.assertIn('почему небо', queued[0].text)
+            self.assertEqual(len(queued), 2)
+            self.assertIn('почему небо', queued[-1].text)
         finally:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)

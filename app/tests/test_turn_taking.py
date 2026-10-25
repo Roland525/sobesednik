@@ -118,3 +118,52 @@ class TurnTakingTests(unittest.IsolatedAsyncioTestCase):
         self.session.conversation.replied_to(1)
         await self.hear(1,'А почему вечером красное?')
         self.assertTrue(self.stt.transcribe.call_args.kwargs['active'])
+
+    async def test_custom_name_alone_gets_one_ack_then_question_does_not_need_name(self):
+        self.session.config.wake_word='Гранит'
+        await self.hear(1,'Гранит!')
+        self.assertEqual(len(self.captured),1)
+        self.assertEqual(self.captured[0].kind,'say')
+        self.assertEqual(self.captured[0].text,'Слушаю.')
+        self.assertEqual(self.captured[0].route_reason,'wake_only')
+        await self.hear(1,'Гранит!')
+        await self.hear(1,'Гранит.')
+        self.assertEqual(len(self.captured),1,'Repeated calls during the same attention window must not loop')
+        await self.hear(1,'Почему небо голубое?')
+        self.assertEqual(len(self.captured),2)
+        self.assertIn('небо',self.captured[-1].text)
+
+    async def test_unknown_word_is_not_accepted_as_custom_wake_or_acknowledged(self):
+        self.session.config.wake_word='Гранит'
+        await self.hear(1,'Граната!')
+        await self.hear(1,'Просто камень.')
+        self.assertEqual(self.captured,[])
+
+    async def test_repeated_bare_name_does_not_loop_when_followups_are_disabled(self):
+        self.session.config.followup_enabled=False
+        self.session.config.wake_word='Гранит'
+        clock=[10.0];self.session.conversation.clock=lambda:clock[0]
+        await self.hear(1,'Гранит!')
+        clock[0]=12.0
+        await self.hear(1,'Гранит!')
+        self.assertEqual(len(self.captured),1)
+        clock[0]=40.0
+        await self.hear(1,'Гранит!')
+        self.assertEqual(len(self.captured),2,'A new attention window must still allow a new call')
+
+    async def test_bare_custom_name_reaches_audio_without_calling_language_model(self):
+        self.session.config.wake_word='Гранит'
+        self.session.enqueue=GuildSession.enqueue.__get__(self.session)
+        self.session.start=lambda:None
+        self.session.tts=NS(generate_audio=AsyncMock(return_value=bytes(3840)))
+        self.session.play_pcm=AsyncMock()
+        responder=asyncio.create_task(self.session.respond())
+        try:
+            await self.hear(1,'Гранит!')
+            await asyncio.wait_for(self.session.questions.join(),1)
+            self.session.tts.generate_audio.assert_awaited_once_with('Слушаю.')
+            self.session.play_pcm.assert_awaited_once()
+            self.assertEqual(self.session.journal.snapshot()[-1]['status'],'answered')
+            self.assertEqual(list(self.session.conversation.history),[])
+        finally:
+            responder.cancel();await asyncio.gather(responder,return_exceptions=True)

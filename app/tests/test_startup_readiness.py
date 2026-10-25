@@ -99,5 +99,6 @@ class StartupReadinessTests(unittest.IsolatedAsyncioTestCase):
                              voice_client=None, me=NS(display_name='Bot')))
         state = control.state()
         self.assertTrue(state['ready'])
+        self.assertEqual(state['wake_word'],bot.config.wake_word)
         self.assertFalse(state['services_ready'])
         self.assertEqual(state['guilds'][0]['channels'][0]['id'], '2')
