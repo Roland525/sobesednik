@@ -84,7 +84,7 @@ class QualityControls:
 
     def build_tuning(self,body):
         block,layout=card('Подобрать настройки под компьютер')
-        layout.addWidget(label('Сравнит до 6 уже установленных моделей в выбранном режиме. Тест сам озвучит вопросы, распознает их и подготовит ответы. Может занять несколько минут; бот должен быть остановлен. Настройки изменятся только после «Применить рекомендацию».','subtitle'))
+        layout.addWidget(label('Сравнит до 6 установленных моделей в выбранном режиме; выбранная модель проверяется первой. Тест сам озвучит вопросы, распознает их и подготовит ответы. Может занять несколько минут; бот должен быть остановлен. Настройки изменятся только после «Применить рекомендацию».','subtitle'))
         self.tune_button=button('Подобрать настройки',self.start_tuning)
         self.tune_apply=button('Применить рекомендацию',self.apply_tuning,True);self.tune_apply.setEnabled(False)
         self.tune_cancel=button('Отменить подбор',self.cancel_operation);self.tune_cancel.setEnabled(False)
@@ -99,8 +99,8 @@ class QualityControls:
         if self.busy:return
         names=getattr(self,'installed_model_names',[])
         if not names:self.notice('Сначала обновите список установленных моделей.');return
-        from .tuning import run_tuning,format_tuning
-        candidates=[{'model':name,'compute_mode':self.compute_choice.currentData()} for name in names[:6]]
+        from .tuning import run_tuning,format_tuning,tuning_candidates
+        candidates=tuning_candidates(names,self.model_choice.currentData(),self.compute_choice.currentData())
         self.tune_apply.setEnabled(False);self.tuning_report=None
         self.tuning_running=True
         self.tune_progress.setRange(0,0);self.tune_result.setPlainText('Готовим проверку распознавания, голоса и установленных моделей…')

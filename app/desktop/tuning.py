@@ -3,6 +3,18 @@ from pathlib import Path
 from .runtime import run_step
 
 
+def tuning_candidates(names,selected,compute_mode,limit=6):
+    from .models import valid_model
+    from bot.config import compute_settings
+    compute_settings(compute_mode)
+    unique={}
+    for name in names:
+        if valid_model(name):unique.setdefault(name.casefold(),name)
+    selected=unique.pop((selected or '').casefold(),None)
+    ordered=([selected] if selected else [])+list(unique.values())
+    return [{'model':name,'compute_mode':compute_mode} for name in ordered[:limit]]
+
+
 def release_candidates(candidates):
     from .models import request
     names={c['model'].casefold() for c in candidates}

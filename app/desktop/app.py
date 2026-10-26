@@ -403,6 +403,7 @@ class MainWindow(QMainWindow,Views,QualityControls):
         if self.resource_pending or self.close_requested: return
         self.resource_pending=True
         def done(data):
+            self.model_resources=data;self.update_model_hints()
             self.cpu_card.update_value(f'{data["cpu"]:.0f}%','Общая загрузка CPU',data['cpu'])
             self.ram_card.update_value(f'{data["ram_percent"]:.0f}%',f'{data["ram_gb"]:.1f} / {data["ram_total_gb"]:.0f} ГБ',data['ram_percent'])
             if data['gpu'] is not None:
@@ -519,19 +520,12 @@ class MainWindow(QMainWindow,Views,QualityControls):
     def model_selection_changed(self,*args):
         self.update_model_actions()
         if not hasattr(self,'model_detail'):return
-        from .models import model_detail
+        from .models import model_detail,model_summary
         name=self.model_choice.currentData() or ''
         details=getattr(self,'installed_model_metadata',{}).get(name.casefold(),{})
         self.model_spec.setText(name+'\n'+model_detail(name,getattr(self,'installed_model_sizes',{}).get(name.casefold()),details))
-        if 'instruct' in name.casefold():
-            explanation='Компактная модель для прямых коротких ответов. Instruct — вариант без отдельного режима обдумывания.'
-        elif ':4b' in name.casefold():
-            explanation='Компактная модель: обычно занимает меньше памяти и подходит, если важен быстрый короткий ответ. Качество зависит от вопроса.'
-        elif name.casefold()=='huihui_ai/qwen3-abliterated:8b':
-            explanation='Универсальная модель для обычной беседы. Начните с неё, если памяти компьютера достаточно. Компактную можно попробовать ради скорости.'
-        else:
-            explanation='Дополнительная локальная модель. Сравните ответы и скорость на своём компьютере: номер версии сам по себе не гарантирует лучшего результата.'
-        self.model_detail.setText(explanation)
+        self.model_detail.setText(model_summary(name))
+        self.update_model_hints()
         self.model_detail.setToolTip(name);self.model_choice.setToolTip(name)
         self.load_saved_benchmark()
 
@@ -555,10 +549,23 @@ class MainWindow(QMainWindow,Views,QualityControls):
         auto=self.compute_choice.currentData()!='cpu'
         self.resource_description.setText('Ollama использует доступную видеокарту; если памяти не хватает, часть работы останется на CPU.' if auto else
             'Разговорная модель работает на CPU, обычно медленнее. Распознавание речи может использовать видеокарту отдельно.')
+        self.update_model_hints()
         self.load_saved_benchmark()
+
+    def update_model_hints(self):
+        from .models import model_summary,model_hardware_hint
+        resources=getattr(self,'model_resources',None)
+        mode=self.compute_choice.currentData() or 'auto'
+        if hasattr(self,'model_hardware'):
+            self.model_hardware.setText(model_hardware_hint(self.model_choice.currentData() or '',resources,mode))
+        if hasattr(self,'model_download_detail'):
+            name=self.model_download.currentData() or ''
+            self.model_download_detail.setText(model_summary(name))
+            self.model_download_hardware.setText(model_hardware_hint(name,resources,mode))
 
     def update_model_actions(self,*args):
         if not hasattr(self,'model_download_button'):return
+        self.update_model_hints()
         installed={name.casefold() for name in getattr(self,'installed_model_names',[])}
         already=(self.model_download.currentData() or '').casefold() in installed
         self.model_download.setToolTip(self.model_download.currentData() or '')

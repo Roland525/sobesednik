@@ -1,5 +1,6 @@
 """Local Ollama model discovery and explicit, cancellable downloads."""
 import json
+import math
 import re
 import urllib.request
 
@@ -7,8 +8,13 @@ CATALOG = (
     ('huihui_ai/qwen3-abliterated:4b-instruct-2507-q4_K_M', 'Qwen 3 Instruct 2507 · 4B · ~2,5 ГБ'),
     ('huihui_ai/qwen3-abliterated:4b', 'Qwen 3 · 4B · ~2,5 ГБ'),
     ('huihui_ai/qwen3-abliterated:8b', 'Qwen 3 · 8B · ~5 ГБ'),
-    ('huihui_ai/qwen3.5-abliterated:9B', 'Qwen 3.5 · 9B · ~6 ГБ'),
+    ('huihui_ai/qwen3.5-abliterated:9B', 'Qwen 3.5 · 9B · ~6,6 ГБ'),
     ('huihui_ai/qwen3.5-abliterated:4B', 'Qwen 3.5 · 4B · ~3,3 ГБ'),
+    ('huihui_ai/qwen3-abliterated:14b', 'Qwen 3 · 14B · ~9 ГБ'),
+    ('huihui_ai/qwen3-abliterated:30b-a3b-instruct-2507-q4_K_M', 'Qwen 3 Instruct · 30B-A3B · ~19 ГБ'),
+    ('huihui_ai/qwen3.5-abliterated:27b-q4_K', 'Qwen 3.5 · 27B · ~17 ГБ'),
+    ('huihui_ai/qwen3.5-abliterated:35b-a3b-q4_K', 'Qwen 3.5 · 35B-A3B · ~24 ГБ'),
+    ('huihui_ai/qwen3-abliterated:32b-q4_K_M', 'Qwen 3 · 32B · ~20 ГБ'),
 )
 
 MODEL_TITLES = {
@@ -17,6 +23,27 @@ MODEL_TITLES = {
     'huihui_ai/qwen3-abliterated:8b': 'Универсальная · Qwen 3 8B',
     'huihui_ai/qwen3.5-abliterated:9b': 'Дополнительная · Qwen 3.5 9B',
     'huihui_ai/qwen3.5-abliterated:4b': 'Компактная · Qwen 3.5 4B',
+    'huihui_ai/qwen3-abliterated:14b': 'Для 16 ГБ VRAM · Qwen 3 14B',
+    'huihui_ai/qwen3-abliterated:30b-a3b-instruct-2507-q4_k_m': 'Диалог на мощном ПК · Qwen 3 30B-A3B',
+    'huihui_ai/qwen3.5-abliterated:27b-q4_k': 'Для 24 ГБ VRAM · Qwen 3.5 27B',
+    'huihui_ai/qwen3.5-abliterated:35b-a3b-q4_k': 'Для 32 ГБ VRAM · Qwen 3.5 35B-A3B',
+    'huihui_ai/qwen3-abliterated:32b-q4_k_m': 'Для 32 ГБ VRAM · Qwen 3 32B',
+}
+
+# Publisher sizes describe downloads, not required VRAM. These conservative
+# GPU guides leave space for the app's bounded context, speech recognition and
+# desktop; they are not measurements or hard compatibility limits.
+MODEL_GUIDANCE = {
+    'huihui_ai/qwen3-abliterated:14b': (16,
+        'Плотная модель для сравнения на более сложных вопросах. Требует больше памяти и вычислений, чем 8B; размер не гарантирует более точный ответ.'),
+    'huihui_ai/qwen3-abliterated:30b-a3b-instruct-2507-q4_k_m': (24,
+        'Кандидат для диалога на мощном ПК: 30,5 млрд параметров всего, около 3,3 млрд активны при генерации. MoE и ответы без отдельного обдумывания снижают объём вычислений; в памяти всё равно нужны все веса.'),
+    'huihui_ai/qwen3.5-abliterated:27b-q4_k': (24,
+        'Большая плотная модель Qwen 3.5 для сравнения качества на сложных вопросах. Вычисляет всю модель; ради минимальной задержки сначала сравните с 30B-A3B Instruct.'),
+    'huihui_ai/qwen3.5-abliterated:35b-a3b-q4_k': (32,
+        'MoE для мощных видеокарт: 35 млрд параметров всего, около 3 млрд активны при генерации. Требует памяти под все веса. Обдумывание можно отключить во вкладке «Общение» ради меньшей задержки.'),
+    'huihui_ai/qwen3-abliterated:32b-q4_k_m': (32,
+        'Большая плотная модель для сравнения качества. При генерации работает вся модель; обычно это больше вычислений, чем у MoE 30B-A3B. Для живого диалога сравните задержку перед выбором.'),
 }
 
 
@@ -24,6 +51,32 @@ def model_title(name):
     if name.casefold() in MODEL_TITLES:return MODEL_TITLES[name.casefold()]
     if name.casefold().startswith('sobesednik-learned:'):return 'Собеседник · обученный Qwen 3 · 8B'
     return name.rsplit('/',1)[-1].split(':',1)[0].replace('-',' ').replace('_',' ').capitalize()
+
+
+def model_summary(name):
+    guidance=MODEL_GUIDANCE.get(name.casefold())
+    if guidance:return guidance[1]
+    if name.casefold()=='huihui_ai/qwen3-abliterated:4b-instruct-2507-q4_k_m':
+        return 'Модель для прямых коротких ответов. Instruct — вариант без отдельного режима обдумывания.'
+    if ':4b' in name.casefold():
+        return 'Компактная модель: обычно занимает меньше памяти и подходит, если важен быстрый короткий ответ. Качество зависит от вопроса.'
+    if name.casefold()=='huihui_ai/qwen3-abliterated:8b':
+        return 'Универсальная модель для обычной беседы. Начните с неё, если памяти компьютера достаточно. Компактную можно попробовать ради скорости.'
+    return 'Дополнительная локальная модель. Сравните ответы и скорость на своём компьютере: номер версии сам по себе не гарантирует лучшего результата.'
+
+
+def model_hardware_hint(name,resources=None,compute_mode='auto'):
+    guidance=MODEL_GUIDANCE.get(name.casefold())
+    if not guidance:return 'Для быстрого ответа модель должна помещаться в видеопамять вместе с контекстом и распознаванием речи. Скорость проверьте локальным тестом.'
+    baseline=f'Ориентир для быстрого диалога: от {guidance[0]} ГБ VRAM. Оценка с запасом под контекст и распознавание речи. '
+    if compute_mode=='cpu':
+        return baseline+'Выбран только процессор: большая модель будет отвечать медленнее. Для скорости выберите автоматическое использование видеокарты.'
+    vram=(resources or {}).get('vram_total_gb')
+    if not isinstance(vram,(int,float)) or not math.isfinite(vram) or vram<=0:
+        return baseline+'Видеопамять не определена; проверьте объём вашей видеокарты перед загрузкой.'
+    if vram < guidance[0]-.5:
+        return baseline+f'Обнаружено {vram:.0f} ГБ: часть модели может уйти на CPU, ответы будут медленнее. Выберите меньшую модель, если важна задержка.'
+    return baseline+f'Обнаружено {vram:.0f} ГБ — объём соответствует ориентиру. Скорость подтвердит локальная проверка; учитывайте другие программы и игры.'
 
 
 def model_detail(name,size=None,details=None):
@@ -34,11 +87,7 @@ def model_detail(name,size=None,details=None):
     estimate=next((title.rsplit(' · ',1)[-1] for key,title in CATALOG if key.casefold()==name.casefold()),'')
     disk=f'Установлено: {size/1024**3:.2f} ГиБ.' if size else f'Загрузка: {estimate} (приблизительно).' if estimate else 'Размер Ollama пока неизвестен.'
     quant=f" Квантизация: {details['quantization_level']}." if details.get('quantization_level') else ''
-    purpose = (' Компактный вариант для коротких ответов; обычно требует меньше памяти, чем варианты 8B/9B.'
-               if match and float(match[1]) <= 4 else
-               ' Основной вариант для повседневного диалога.'
-               if name.casefold() == 'huihui_ai/qwen3-abliterated:8b' else
-               ' Дополнительный вариант для сравнения на вашем компьютере.')
+    purpose=' '+model_summary(name)
     return (params+' '+disk+quant+purpose+
             ' Для контекста нужна дополнительная оперативная или видеопамять. Скорость зависит от компьютера, '+
             'длины ответа и размещения модели; проверяйте её локальным тестом. Число параметров не является оценкой интеллекта.')

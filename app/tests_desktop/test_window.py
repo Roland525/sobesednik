@@ -272,6 +272,28 @@ class WindowTests(unittest.TestCase):
         self.assertIn('Q4_K_M',self.window.model_spec.text())
         self.assertNotIn('huihui_ai',self.window.model_download.itemText(0))
 
+    def test_large_instruct_selection_has_correct_purpose_and_gpu_hint(self):
+        name='huihui_ai/qwen3-abliterated:30b-a3b-instruct-2507-q4_K_M'
+        self.window.model_resources={'vram_total_gb':8}
+        self.window.accept_model_inventory([{'name':name,'size':19*10**9}],name)
+        self.assertIn('3,3',self.window.model_detail.text())
+        self.assertNotIn('Компактная',self.window.model_detail.text())
+        self.assertIn('CPU',self.window.model_hardware.text())
+        self.window.model_resources={'vram_total_gb':24}
+        self.window.update_model_hints()
+        self.assertIn('соответствует ориентиру',self.window.model_hardware.text())
+        self.window.compute_choice.setCurrentIndex(self.window.compute_choice.findData('cpu'))
+        self.assertIn('только процессор',self.window.model_hardware.text().lower())
+
+    def test_download_preview_explains_large_model_before_installing_it(self):
+        name='huihui_ai/qwen3.5-abliterated:35b-a3b-q4_K'
+        self.window.model_resources={'vram_total_gb':8}
+        index=self.window.model_download.findData(name)
+        self.assertGreaterEqual(index,0);self.window.model_download.setCurrentIndex(index)
+        self.assertIn('3 млрд',self.window.model_download_detail.text())
+        self.assertIn('32',self.window.model_download_hardware.text())
+        self.assertTrue(self.window.model_download_button.isEnabled())
+
     def test_saved_benchmark_is_shown_only_for_matching_model_and_resources(self):
         import json
         name='huihui_ai/qwen3-abliterated:8b'
