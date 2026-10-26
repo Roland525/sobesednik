@@ -1,6 +1,7 @@
 """Local Ollama model discovery and explicit, cancellable downloads."""
 import json
 import math
+from pathlib import Path
 import re
 import urllib.request
 
@@ -111,6 +112,39 @@ def installed_model_info(host):
 
 def installed_models(host):
     return [item['name'] for item in installed_model_info(host)]
+
+def local_model_info(folder):
+    """Read complete bundled model manifests without starting a model server."""
+    root=Path(folder).resolve();base=root/'manifests/registry.ollama.ai'
+    def blob(entry):
+        digest=entry.get('digest','');size=entry.get('size')
+        if not re.fullmatch(r'sha256:[a-f0-9]{64}',digest) or type(size) is not int or size<=0:
+            raise ValueError('Invalid model blob')
+        path=root/'blobs'/digest.replace(':','-')
+        if not path.resolve().is_relative_to(root) or path.stat().st_size!=size:
+            raise ValueError('Incomplete model blob')
+        return path,size
+    rows=[]
+    for path in sorted(base.glob('*/*/*')):
+        try:
+            if not path.is_file() or not path.resolve().is_relative_to(root) or path.stat().st_size>1024**2:continue
+            namespace,model,tag=path.relative_to(base).parts
+            name=(model if namespace=='library' else namespace+'/'+model)+':'+tag
+            if not valid_model(name):continue
+            manifest=json.loads(path.read_text(encoding='utf-8'))
+            config_path,config_size=blob(manifest['config'])
+            if config_size>1024**2:continue
+            config=json.loads(config_path.read_text(encoding='utf-8'))
+            if config.get('remote_model') or config.get('remote_host'):continue
+            layers=manifest['layers']
+            if not isinstance(layers,list) or not layers or len(layers)>1000:continue
+            size=config_size+sum(blob(entry)[1] for entry in layers)
+            rows.append({'name':name,'size':size,'details':{
+                'parameter_size':config.get('model_type',''),'family':config.get('model_family',''),
+                'quantization_level':config.get('file_type','')}})
+        except (OSError,ValueError,KeyError,TypeError,AttributeError):continue
+    return rows
+
 
 def pull_model(host, name, progress, cancel):
     if name not in dict(CATALOG): raise ValueError('Выберите модель из списка загрузки')

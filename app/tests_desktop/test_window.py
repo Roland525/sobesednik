@@ -260,6 +260,53 @@ class WindowTests(unittest.TestCase):
         self.window.model_download.setCurrentIndex(1)
         self.assertTrue(self.window.model_download_button.isEnabled())
 
+    def test_inventory_refresh_does_not_launch_server_when_it_is_off(self):
+        name='huihui_ai/qwen3-abliterated:4b'
+        with patch.object(self.window.runtime,'ensure_ollama') as start,\
+             patch('desktop.models.installed_model_info',side_effect=OSError('offline')),\
+             patch('desktop.models.local_model_info',return_value=[{'name':name,'size':1024}]) as local:
+            self.window.refresh_models()
+            deadline=__import__('time').monotonic()+3
+            while self.window.jobs and __import__('time').monotonic()<deadline:
+                self.app.processEvents();QTest.qWait(10)
+            start.assert_not_called();local.assert_called_once()
+            self.assertIn(name,self.window.installed_model_names)
+
+    @unittest.skipUnless(os.name=='nt','Windows desktop process ownership')
+    def test_stop_button_then_close_ends_real_owned_processes(self):
+        import socket,subprocess,sys,time,json
+        from desktop.runtime import OwnedProcess
+        source=Path(__file__).resolve().parents[1]
+        ready=self.window.profile.root/'synthetic-server.json'
+        voice_ready=self.window.profile.root/'synthetic-voice-ready'
+        stop=self.window.profile.root/'.serega.stop'
+        server_code=('import socket,time,json;from pathlib import Path;'
+            's=socket.socket();s.bind(("127.0.0.1",0));s.listen();'
+            'Path('+repr(str(ready))+').write_text(json.dumps({"port":s.getsockname()[1]}));time.sleep(60)')
+        voice_code=('import time;from pathlib import Path;'
+            'Path('+repr(str(voice_ready))+').touch();'
+            '\nwhile not Path('+repr(str(stop))+').exists():time.sleep(.02)')
+        server=OwnedProcess([sys.executable,'-c',server_code],source,sys.executable,stdout=subprocess.DEVNULL)
+        voice=OwnedProcess([sys.executable,'-c',voice_code],source,sys.executable,stdout=subprocess.DEVNULL)
+        self.window.runtime.server=server;self.window.runtime.process=voice
+        try:
+            deadline=time.monotonic()+8
+            while (not ready.exists() or not voice_ready.exists() or self.window.jobs) and time.monotonic()<deadline:
+                self.app.processEvents();QTest.qWait(10)
+            port=json.loads(ready.read_text())['port']
+            self.window.refresh();self.assertTrue(self.window.stop_button.isEnabled())
+            self.window.stop_button.click()
+            deadline=time.monotonic()+8
+            while self.window.jobs and time.monotonic()<deadline:self.app.processEvents();QTest.qWait(10)
+            self.assertFalse(self.window.jobs)
+            self.assertIsNotNone(voice.poll());self.assertIsNotNone(server.poll())
+            self.assertIsNone(self.window.runtime.server);self.assertIsNone(self.window.runtime.process)
+            with socket.socket() as client:
+                client.settimeout(.2);self.assertNotEqual(client.connect_ex(('127.0.0.1',port)),0)
+            self.assertTrue(self.window.close());self.app.processEvents()
+            self.assertFalse(self.window.isVisible())
+        finally:voice.close();server.close()
+
     def test_model_names_are_readable_and_technical_tag_is_in_tooltip(self):
         name='huihui_ai/qwen3-abliterated:8b'
         self.window.accept_model_inventory([{'name':name,'size':5*1024**3,

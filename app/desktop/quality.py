@@ -105,8 +105,8 @@ class QualityControls:
         self.tuning_running=True
         self.tune_progress.setRange(0,0);self.tune_result.setPlainText('Готовим проверку распознавания, голоса и установленных моделей…')
         def work(task):
-            self.runtime.ensure_ollama(self.cancel)
-            return run_tuning(self.profile.root,candidates,self.cancel,lambda text:task.progress.emit(0,'Автоподбор',text))
+            with self.runtime.temporary_server(self.cancel):
+                return run_tuning(self.profile.root,candidates,self.cancel,lambda text:task.progress.emit(0,'Автоподбор',text))
         def done(report):
             self.tuning_report=report;self.tune_result.setPlainText(format_tuning(report))
             self.tune_apply.setEnabled(bool(report.get('recommendation')))
@@ -177,10 +177,10 @@ class QualityControls:
         model=self.profile.settings()['ollama_model'];root=self.profile.root
         output=root/'reports/feedback-check.json'
         def work(task):
-            self.runtime.ensure_ollama(self.cancel)
-            run_step([self.runtime.python,root/'tools/check_feedback.py','--guild',str(guild),'--model',model,'--output',output],
-                root,self.runtime.python,lambda text:task.progress.emit(0,'Проверка исправлений',text),self.cancel,900)
-            return json.loads(output.read_text(encoding='utf-8-sig'))
+            with self.runtime.temporary_server(self.cancel):
+                run_step([self.runtime.python,root/'tools/check_feedback.py','--guild',str(guild),'--model',model,'--output',output],
+                    root,self.runtime.python,lambda text:task.progress.emit(0,'Проверка исправлений',text),self.cancel,900)
+                return json.loads(output.read_text(encoding='utf-8-sig'))
         self.run_job(work,lambda report:self.feedback_result.setPlainText(json.dumps(report,ensure_ascii=False,indent=2)))
 
     def selected_turn(self):

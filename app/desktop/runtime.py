@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import queue
@@ -102,15 +103,25 @@ class Runtime:
                    OLLAMA_NO_CLOUD='1',OLLAMA_NUM_PARALLEL='1',OLLAMA_MAX_LOADED_MODELS='1',OLLAMA_FLASH_ATTENTION='1')
         (self.root/'logs').mkdir(exist_ok=True)
         self.server_log=(self.root/'logs/desktop-ollama.log').open('a',encoding='utf-8')
-        self.server=OwnedProcess([executable,'serve'],self.root,self.python,env,self.server_log)
-        for _ in range(60):
-            if cancel and cancel.is_set(): raise InterruptedError('Операция отменена')
-            if available(): return
-            if self.server.poll() is not None: break
-            time.sleep(.3)
-        self.server.close(); self.server=None
-        self.server_log.close(); self.server_log=None
-        raise RuntimeError('Ollama не запустилась. Смотрите журнал desktop-ollama.log.')
+        try:
+            self.server=OwnedProcess([executable,'serve'],self.root,self.python,env,self.server_log)
+            for _ in range(60):
+                if cancel and cancel.is_set(): raise InterruptedError('Операция отменена')
+                if available(): return
+                if self.server.poll() is not None: break
+                time.sleep(.3)
+            raise RuntimeError('Ollama не запустилась. Смотрите журнал desktop-ollama.log.')
+        except BaseException:
+            self.close_server()
+            raise
+
+    @contextmanager
+    def temporary_server(self,cancel=None):
+        """A setup/test/download may borrow Ollama, but cannot leave it idle."""
+        self.ensure_ollama(cancel)
+        try:yield
+        finally:
+            if not self.running():self.close_server()
 
     def start(self,resume_channel=0):
         if self.running(): raise RuntimeError('Бот уже запущен')
@@ -120,17 +131,23 @@ class Runtime:
         token=load_token(self.root)
         if not token: raise ValueError('Сначала сохраните токен в разделе Discord')
         self.ensure_ollama()
-        env=child_env(); env['DISCORD_TOKEN']=token
-        (self.root/'logs').mkdir(exist_ok=True)
-        self.log_handle=(self.root/'logs/desktop-startup.log').open('a',encoding='utf-8')
-        command=self.bot_command()
-        if resume_channel: command += ['--resume-channel',str(int(resume_channel))]
-        self.process=OwnedProcess(command,self.root,self.python,env,self.log_handle)
+        try:
+            env=child_env(); env['DISCORD_TOKEN']=token
+            (self.root/'logs').mkdir(exist_ok=True)
+            self.log_handle=(self.root/'logs/desktop-startup.log').open('a',encoding='utf-8')
+            command=self.bot_command()
+            if resume_channel: command += ['--resume-channel',str(int(resume_channel))]
+            self.process=OwnedProcess(command,self.root,self.python,env,self.log_handle)
+        except BaseException:
+            if self.log_handle:self.log_handle.close(); self.log_handle=None
+            self.close_server()
+            raise
 
     def stop(self, timeout=40):
         if not self.running():
             if self.process: self.process.close(); self.process=None
             if self.log_handle: self.log_handle.close(); self.log_handle=None
+            self.close_server()
             return
         (self.root/'.serega.stop').write_text('stop',encoding='ascii')
         end=time.monotonic()+timeout
@@ -144,6 +161,7 @@ class Runtime:
             raise RuntimeError('Не удалось подтвердить остановку. Новая копия не будет запущена.')
         (self.protocol.directory/'state.json').unlink(missing_ok=True)
         if self.log_handle: self.log_handle.close(); self.log_handle=None
+        self.close_server()
 
     def close_server(self):
         """Release only the Ollama process tree owned by this application."""
@@ -151,8 +169,8 @@ class Runtime:
         if self.server_log: self.server_log.close(); self.server_log=None
 
     def close(self):
-        self.stop()
-        self.close_server()
+        try:self.stop()
+        finally:self.close_server()
 
 
 def sample_resources():

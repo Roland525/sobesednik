@@ -589,9 +589,9 @@ class MainWindow(QMainWindow,Views,QualityControls):
 
     def refresh_models(self):
         def fetch(_):
-            from .models import installed_model_info
-            self.runtime.ensure_ollama(self.cancel)
-            return installed_model_info('http://127.0.0.1:11434')
+            from .models import installed_model_info,local_model_info
+            try:return installed_model_info('http://127.0.0.1:11434')
+            except (OSError,ValueError):return local_model_info(self.profile.root/'models/ollama')
         def done(items):
             self.accept_model_inventory(items)
             self.model_status.setText(f'Локально установлено моделей: {len(items)}. Выбор применяется после сохранения и перезапуска.')
@@ -604,9 +604,9 @@ class MainWindow(QMainWindow,Views,QualityControls):
         if self.busy:self.notice('Дождитесь завершения текущей операции.');return
         def download(task):
             from .models import pull_model,installed_model_info
-            self.runtime.ensure_ollama(self.cancel)
-            pull_model('http://127.0.0.1:11434',name,task.progress.emit,self.cancel)
-            return installed_model_info('http://127.0.0.1:11434')
+            with self.runtime.temporary_server(self.cancel):
+                pull_model('http://127.0.0.1:11434',name,task.progress.emit,self.cancel)
+                return installed_model_info('http://127.0.0.1:11434')
         def done(items):
             self.accept_model_inventory(items,name)
             self.model_progress.setValue(100); self.model_status.setText('Модель скачана. Нажмите «Сохранить и перезапустить», чтобы использовать её.')
@@ -628,8 +628,8 @@ class MainWindow(QMainWindow,Views,QualityControls):
         self.benchmark_progress.setRange(0,8);self.benchmark_progress.setValue(0)
         self.benchmark_running=True
         def measure(task):
-            self.runtime.ensure_ollama(self.cancel)
-            return run_benchmark(cfg,self.cancel,lambda text:task.progress.emit(0,'Проверка модели',text))
+            with self.runtime.temporary_server(self.cancel):
+                return run_benchmark(cfg,self.cancel,lambda text:task.progress.emit(0,'Проверка модели',text))
         def done(report):
             key=report_key(model,cfg['compute_mode'])
             atomic_json(self.profile.root/f'reports/model-benchmark-{key}.json',report)

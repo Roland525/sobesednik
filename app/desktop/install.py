@@ -94,19 +94,19 @@ class Installer:
         step(42,'Голосовые модели',[venv,'tools/download_models.py','--ollama','--tts-engine','supertonic',
                                   '--stt-model',stt_model],14400)
         self.progress(70,'Ollama','Запускаем локальный сервер моделей')
-        self.runtime.ensure_ollama(self.cancel)
-        config=json.loads((self.root/'config.json').read_text(encoding='utf-8-sig'))
-        model=config.get('ollama_model','huihui_ai/qwen3-abliterated:8b')
-        request=urllib.request.Request('http://127.0.0.1:11434/api/pull',
-            data=json.dumps({'model':model,'stream':True}).encode(),headers={'Content-Type':'application/json'})
-        with urllib.request.urlopen(request,timeout=120) as response:
-            for line in response:
-                if self.cancel.is_set(): raise Cancelled('Установка отменена')
-                data=json.loads(line)
-                if data.get('error'): raise RuntimeError('Ollama: '+str(data['error'])[:200])
-                total=data.get('total',0); done=data.get('completed',0)
-                self.progress(70+int(24*done/total) if total else 70,'Разговорная модель',
-                    str(data.get('status',''))+(f' · {done//1048576}/{total//1048576} МБ' if total else ''))
+        with self.runtime.temporary_server(self.cancel):
+            config=json.loads((self.root/'config.json').read_text(encoding='utf-8-sig'))
+            model=config.get('ollama_model','huihui_ai/qwen3-abliterated:8b')
+            request=urllib.request.Request('http://127.0.0.1:11434/api/pull',
+                data=json.dumps({'model':model,'stream':True}).encode(),headers={'Content-Type':'application/json'})
+            with urllib.request.urlopen(request,timeout=120) as response:
+                for line in response:
+                    if self.cancel.is_set(): raise Cancelled('Установка отменена')
+                    data=json.loads(line)
+                    if data.get('error'): raise RuntimeError('Ollama: '+str(data['error'])[:200])
+                    total=data.get('total',0); done=data.get('completed',0)
+                    self.progress(70+int(24*done/total) if total else 70,'Разговорная модель',
+                        str(data.get('status',''))+(f' · {done//1048576}/{total//1048576} МБ' if total else ''))
         step(96,'Проверка',[venv,'main.py','--check'],180)
         atomic_json(self.root/'.desktop-ready.json',{'schema':1,'stt_model':stt_model,'model':model})
         self.progress(100,'Готово','Откройте Discord, сохраните токен и выберите голосовой канал')
