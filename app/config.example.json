@@ -10,7 +10,7 @@
   "followup_enabled": true,
   "interrupt_enabled": true,
   "learning_capture_enabled": true,
-  "learning_auto_enabled": false,
+  "learning_auto_enabled": true,
   "ollama_host": "http://127.0.0.1:11434",
   "ollama_model": "huihui_ai/qwen3-abliterated:8b",
   "ollama_num_ctx": 4096,

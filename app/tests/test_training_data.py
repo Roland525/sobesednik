@@ -14,6 +14,12 @@ def row(prompt, target, source='human_dialogue'):
 
 
 class TrainingDataTests(unittest.TestCase):
+    def test_attributed_opinions_do_not_become_automatic_training_answers(self):
+        self.assertFalse(informative_dialogue('Какая игра заслуживает внимания?',
+            'Half Life 2 Episode Two лучшая игра.'))
+        self.assertFalse(informative_dialogue('Какая игра заслуживает внимания?',
+            'Кстати, Half Life 2 Episode Two лучшая игра.'))
+
     def test_natural_learning_uses_complete_explanations_not_backchannels_or_identity(self):
         self.assertTrue(informative_dialogue('Почему небо голубое?',
             'Короткие волны солнечного света сильнее рассеиваются в атмосфере.'))

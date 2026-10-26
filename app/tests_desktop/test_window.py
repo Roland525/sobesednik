@@ -317,6 +317,26 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(cfg['listen_conversation']);self.assertFalse(cfg['memory_auto_enabled'])
         self.assertFalse(cfg['learning_capture_enabled']);self.assertFalse(cfg['learning_auto_enabled'])
 
+    def test_new_memory_screen_enables_auto_memory_and_idle_training_without_claiming_training_ran(self):
+        self.assertTrue(self.window.memory_auto_enabled.isChecked())
+        self.assertTrue(self.window.learning_capture_enabled.isChecked())
+        self.assertTrue(self.window.learning_auto_enabled.isChecked())
+        self.window.refresh_learning_status()
+        self.assertIn('включена',self.window.memory_auto_status.text())
+        self.assertIn('Подтверждённого результата обучения весов в журнале нет',self.window.learning_label.text())
+
+    def test_memory_table_labels_new_and_legacy_opinions_with_authorship(self):
+        deadline=__import__('time').monotonic()+3
+        while self.window.memory_pending and __import__('time').monotonic()<deadline:
+            self.app.processEvents();QTest.qWait(10)
+        self.window.memory_data=[dict(record_id=index,guild=1,target_name='Автор',
+            content='Шахматы лучшая игра.',author_name='Автор',updated=1,kind=kind,slot=slot)
+            for index,kind,slot in ((1,'opinion','auto:opinion:synthetic'),(2,'fact','auto:quote:synthetic'))]
+        self.window.fill_memory('notes')
+        for index in range(2):
+            self.assertEqual(self.window.memory_table.item(index,4).text(),'Мнение')
+            self.assertEqual(self.window.memory_table.item(index,2).text(),'Автор')
+
     def test_enabled_training_does_not_claim_weights_were_trained(self):
         self.window.profile.save_settings({'learning_capture_enabled':True,'learning_auto_enabled':True})
         self.window.refresh_learning_status()

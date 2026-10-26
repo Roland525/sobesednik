@@ -208,12 +208,12 @@ class Views:
         body.addWidget(label('Здесь — сохранённые сведения и кто их сообщил. Бот учитывает их как слова участников, а не проверенные факты. Новый автоматический отбор пропускает обрывки и случайные реплики; старые записи можно просмотреть и удалить.','subtitle'))
         block=Disclosure('Что запоминать автоматически');layout=block.body
         self.listen_conversation=QCheckBox('Учитывать разговор людей в голосовом канале')
-        self.memory_auto_enabled=QCheckBox('Запоминать устойчивые сведения: имена, предпочтения, занятия и привычки')
+        self.memory_auto_enabled=QCheckBox('Автопамять: имена, предпочтения, занятия, привычки и мнения')
         self.learning_capture_enabled=QCheckBox('Собирать подходящие примеры и мои исправления для улучшения ответов')
-        self.learning_auto_enabled=QCheckBox('Дообучать совместимую модель автоматически в простое · нужен тренер')
+        self.learning_auto_enabled=QCheckBox('Автодообучение в простое · включено по умолчанию, нужен готовый тренер')
         for control in (self.listen_conversation,self.memory_auto_enabled,self.learning_capture_enabled,self.learning_auto_enabled):layout.addWidget(control)
         self.learning_capture_enabled.toggled.connect(self.learning_capture_changed)
-        layout.addWidget(label('Полезные сведения сохраняются автоматически. Когда отвечать — выбирается в настройках бота. Для изменения весов нужен отдельный тренер. После изменения этих параметров перезапусти бота.','subtitle'))
+        layout.addWidget(label('Подходящие сведения и мнения сохраняются сразу, без команды «запомни». Мнения хранятся со слов автора. Сбор примеров работает отдельно; дообучение весов запускается при готовом тренере в простое. После изменения этих параметров перезапусти бота.','subtitle'))
         body.addWidget(block)
         block=Disclosure('Добавить запись вручную');layout=block.body
         self.memory_input=QLineEdit(); self.memory_input.setMaxLength(400); self.memory_input.setPlaceholderText('Например: по пятницам мы играем в шахматы')
@@ -221,6 +221,7 @@ class Views:
         layout.addWidget(label('Заметка сохраняется для выбранного сервера и переживает перезапуск. Автор — владелец через панель. Для голоса: «Собеседник, запомни: …».','subtitle')); body.addWidget(block)
         block,layout=card()
         self.memory_kind=QComboBox(); self.memory_kind.addItem('Сведения','notes'); self.memory_kind.addItem('Участники','people'); self.memory_kind.addItem('Учебные примеры','examples')
+        self.memory_auto_status=label('Автопамять включена по умолчанию','subtitle');layout.addWidget(self.memory_auto_status)
         self.search=QLineEdit(); self.search.setPlaceholderText('Поиск по имени или содержимому'); self.search.textChanged.connect(self.filter_memory)
         self.memory_kind.currentIndexChanged.connect(self.refresh_memory)
         layout.addWidget(row(self.memory_kind,self.search,button('Обновить',self.refresh_memory)))

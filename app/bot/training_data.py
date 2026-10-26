@@ -6,10 +6,13 @@ import re
 def informative_dialogue(prompt, target):
     """Conservative automatic Q/A selection; never an assertion of factual truth.
 
-    Names/preferences belong in attributed memory, not anonymous model targets.
+    Names/preferences/opinions belong in attributed memory, not anonymous model targets.
     Explicit human correction/confirmation is handled separately by the caller.
     """
     if not isinstance(prompt, str) or not isinstance(target, str):
+        return False
+    from .memory import opinion_subject
+    if opinion_subject(target):
         return False
     words = re.findall(r'\w+', target.casefold())
     question = '?' in prompt or re.match(r'^(?:почему|как|что такое|чем|зачем|когда|сколько)\b', prompt, re.I)

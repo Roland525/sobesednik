@@ -8,7 +8,7 @@ import time
 import uuid
 import zipfile
 
-from bot.config import Config, normalize_compute
+from bot.config import Config, normalize_compute, normalize_learning
 
 EDITABLE = {'wake_word', 'bot_name', 'tts_speed', 'tts_volume', 'tts_supertonic_voice',
             'tts_supertonic_steps', 'conversation_mode', 'max_response_chars', 'history_turns',
@@ -116,7 +116,7 @@ class Profile:
         path=self.root/'config.json'
         raw=json.loads(read_shared(path,'utf-8-sig')) if path.exists() else {}
         values={k:getattr(Config(),k) for k in EDITABLE}
-        values.update({k:v for k,v in normalize_compute(raw).items() if k in EDITABLE})
+        values.update({k:v for k,v in normalize_learning(normalize_compute(raw)).items() if k in EDITABLE})
         return values
 
     def save_settings(self, patch):
@@ -124,8 +124,10 @@ class Profile:
         path=self.root/'config.json'
         raw=json.loads(path.read_text(encoding='utf-8-sig')) if path.exists() else {}
         # Capture a legacy CPU choice before response profiles replace num_gpu.
-        raw=normalize_compute(raw)
+        raw=normalize_learning(normalize_compute(raw))
         raw.update(patch)
+        if patch.get('learning_capture_enabled') is False and 'learning_auto_enabled' not in patch:
+            raw['learning_auto_enabled']=False
         if 'response_profile' in patch:
             from bot.config import RESPONSE_PROFILES
             raw.update(RESPONSE_PROFILES.get(patch['response_profile'], {}))

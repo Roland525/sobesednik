@@ -11,7 +11,7 @@
 *Sobesednik is an open-source local AI voice companion for Discord, with Russian speech,
 participant memory and a Windows installer.*
 
-**[⬇ СКАЧАТЬ ДЛЯ WINDOWS · EXE](https://github.com/Roland525/sobesednik/releases/download/v1.1.8/Sobesednik-Setup-1.1.8.exe)**
+**[⬇ СКАЧАТЬ ДЛЯ WINDOWS · EXE](https://github.com/Roland525/sobesednik/releases/download/v1.1.9/Sobesednik-Setup-1.1.9.exe)**
 
 [Первая настройка](docs/GUIDE.md#как-получить-токен-бота) · [Все выпуски](https://github.com/Roland525/sobesednik/releases) · [Сообщить о проблеме](https://github.com/Roland525/sobesednik/issues)
 
@@ -57,7 +57,7 @@ participant memory and a Windows installer.*
 - Интернет нужен для Discord и загрузки компонентов; чтение официальных патчноутов Dota 2 включается отдельно.
 - Бот может ошибаться. Просмотр демонстраций Discord Go Live пока не реализован.
 - Постоянная память доступна сразу. Обучение весов — отдельная экспериментальная функция с дополнительными требованиями.
-- EXE пока без цифровой подписи издателя. Контрольная сумма опубликована в [выпуске](https://github.com/Roland525/sobesednik/releases/tag/v1.1.8).
+- EXE пока без цифровой подписи издателя. Контрольная сумма опубликована в [выпуске](https://github.com/Roland525/sobesednik/releases/tag/v1.1.9).
 - Удаление приложения сохраняет модели и память в `%LOCALAPPDATA%\Sobesednik`; подробности — в [руководстве](docs/GUIDE.md).
 
 </details>

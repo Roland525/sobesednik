@@ -11,6 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 BEHAVIOR_FIELDS=('conversation_mode','followup_enabled','interrupt_enabled')
 
 
+def normalize_learning(data):
+    data=dict(data)
+    if data.get('learning_capture_enabled') is False and 'learning_auto_enabled' not in data:
+        data['learning_auto_enabled']=False
+    return data
+
+
 def validate_behavior(values):
     if not isinstance(values,dict) or set(values)!=set(BEHAVIOR_FIELDS):
         raise ValueError('Поведение: укажите режим, продолжения диалога и прерывание речи')
@@ -92,7 +99,7 @@ class Config:
     memory_auto_enabled: bool = True
     listen_conversation: bool = True
     learning_capture_enabled: bool = True
-    learning_auto_enabled: bool = False
+    learning_auto_enabled: bool = True
     max_response_chars: int = 1000
     history_turns: int = 8
     history_chars: int = 5000
@@ -225,7 +232,7 @@ class Config:
         data = json.loads(path.read_text(encoding='utf-8-sig')) if path.exists() else {}
         if not isinstance(data, dict):
             raise ValueError('config.json должен содержать JSON-объект')
-        data = normalize_compute(data)
+        data = normalize_learning(normalize_compute(data))
         # Old credentials/options stay on disk. No cloud options are used.
         known = {field.name for field in fields(cls)}
         config = cls(**{key: value for key, value in data.items() if key in known})

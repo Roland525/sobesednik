@@ -24,8 +24,8 @@ class LearningCycleTests(unittest.TestCase):
         self.assertTrue(compatible_training_model('sobesednik-learned-20261024-123456:latest'))
         for model in ['huihui_ai/qwen3-abliterated:4b','huihui_ai/qwen3.5-abliterated:9B','sobesednik-learned-untrusted:latest']:
             self.assertFalse(compatible_training_model(model))
-    def test_automatic_training_requires_capture_and_is_opt_in(self):
-        self.assertFalse(Config().learning_auto_enabled)
+    def test_automatic_training_defaults_on_but_still_requires_capture(self):
+        self.assertTrue(Config().learning_auto_enabled)
         with self.assertRaises(ValueError):
             Config(learning_auto_enabled=True, learning_capture_enabled=False).validate()
         with self.assertRaises(ValueError):

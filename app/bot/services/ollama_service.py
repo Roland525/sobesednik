@@ -255,7 +255,7 @@ class OllamaService:
             return []
         schema={'type':'object','properties':{'facts':{'type':'array','maxItems':4,'items':{
             'type':'object','properties':{'index':{'type':'integer','minimum':0,'maximum':len(utterances)-1},
-            'category':{'type':'string','enum':['identity','preference','routine','profile','agreement']}},
+            'category':{'type':'string','enum':['identity','preference','routine','profile','agreement','opinion']}},
             'required':['index','category'],'additionalProperties':False}}},'required':['facts'],'additionalProperties':False}
         instruction='''Отбирай только законченные, конкретные долгосрочные сведения людей.
 Перед выбором каждой реплики проверь: понятны автор и предмет; утверждение закончено;
@@ -263,6 +263,8 @@ class OllamaService:
 догадки, восстановления пропущенных слов, чужой цитаты или удаления отрицания.
 Допустимы: представление, занятие, устойчивое предпочтение, привычное расписание,
 явная постоянная договорённость. Сомнение или непонятный смысл — пропусти реплику.
+Оценка конкретного предмета — opinion: «Шахматы — лучшая игра». Это мнение автора,
+а не установленный факт. Не приписывай его другим людям и не подтверждай его истинность.
 Хорошие примеры: «Я работаю дизайнером» (profile); «Мне нравится играть в шахматы»
 (preference); «По пятницам мы играем в шахматы» (routine);
 «Мы договорились созваниваться по понедельникам» (agreement); «Меня зовут Паша» (identity).
@@ -290,7 +292,7 @@ class OllamaService:
             for fact in facts[:4]:
                 if (not isinstance(fact,dict) or type(fact.get('index')) is not int
                     or not 0<=fact['index']<len(utterances)
-                    or fact.get('category') not in ('identity','preference','routine','profile','agreement')):
+                    or fact.get('category') not in ('identity','preference','routine','profile','agreement','opinion')):
                     continue
                 original=utterances[fact['index']].get('text')
                 if not isinstance(original,str) or not automatic_memory_category(original):

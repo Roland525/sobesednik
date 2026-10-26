@@ -651,8 +651,11 @@ class MainWindow(QMainWindow,Views,QualityControls):
     def refresh_learning_status(self):
         from bot.learning_cycle import compatible_training_model
         cfg=self.profile.settings()
+        if hasattr(self,'memory_auto_status'):
+            enabled=cfg['memory_enabled'] and cfg.get('memory_auto_enabled',True)
+            self.memory_auto_status.setText('В настройках автопамять '+('включена: имена, сведения, привычки и мнения участников.' if enabled else 'выключена. Включи её в блоке «Что запоминать автоматически».'))
         text=('Постоянная память: '+('включена' if cfg['memory_enabled'] else 'выключена')+
-              '. Автосохранение фактов: '+('включено' if cfg.get('memory_auto_enabled',True) else 'выключено')+
+              '. Автосохранение сведений и мнений: '+('включено' if cfg.get('memory_auto_enabled',True) else 'выключено')+
               '. Сбор примеров: '+('включён' if cfg['learning_capture_enabled'] else 'выключен')+
               '. Авто-LoRA: '+('включено' if cfg['learning_auto_enabled'] else 'выключено')+'. ')
         status=None
@@ -858,9 +861,10 @@ class MainWindow(QMainWindow,Views,QualityControls):
         for record in self.memory_data:
             review=False
             if kind=='notes':
-                from bot.memory import automatic_memory_usable
+                from bot.memory import automatic_memory_usable,memory_record_kind
                 review=bool(record.get('slot','').startswith('auto:') and not automatic_memory_usable(record))
-                caption='Проверьте запись' if review else {'fact':'Сведения','banter':'Подкол по просьбе'}.get(record['kind'],record['kind'])
+                kind_label=memory_record_kind(record)
+                caption='Проверьте запись' if review else {'fact':'Сведения','opinion':'Мнение','banter':'Подкол по просьбе'}.get(kind_label,kind_label)
                 date=time.strftime('%d.%m.%Y %H:%M',time.localtime(record['updated']))
                 values=[record['target_name'],record['content'],record['author_name'],date,caption]
             elif kind=='people': values=[record['nick'],record['username']+
